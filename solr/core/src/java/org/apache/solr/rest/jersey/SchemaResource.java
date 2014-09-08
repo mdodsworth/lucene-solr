@@ -23,6 +23,7 @@ import javax.ws.rs.PathParam;
 
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.core.SolrCore;
+import org.apache.solr.servlet.SolrDispatchFilter;
 
 /**
  * FIXME - mdodsworth: doc me!
@@ -55,8 +56,9 @@ public class SchemaResource {
   }
 
   //======== helper methods ========//
+  
   private SolrCore getCore() {
-    CoreContainer coreContainer = new CoreContainer();
+    CoreContainer coreContainer = SolrDispatchFilter.CORE_CONTAINER;
     return coreContainer.getCore(coreName);
   }
 }

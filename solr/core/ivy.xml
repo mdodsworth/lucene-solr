@@ -23,6 +23,7 @@
     <!-- artifacts in the "compile" and "compile.hadoop" configurations will go into solr/core/lib/ -->
     <conf name="compile" transitive="false"/>
     <conf name="compile.hadoop" transitive="false"/>
+    <conf name="compile.jersey" transitive="true"/>
     <!-- artifacts in the "test" and "test.DfsMiniCluster" configuration will go into solr/core/test-lib/ -->
     <conf name="test" transitive="false"/>
     <conf name="test.DfsMiniCluster" transitive="false"/>
@@ -41,7 +42,9 @@
     <dependency org="org.restlet.jee" name="org.restlet" rev="${/org.restlet.jee/org.restlet}" conf="compile->*"/>
     <dependency org="org.restlet.jee" name="org.restlet.ext.servlet" rev="${/org.restlet.jee/org.restlet.ext.servlet}" conf="compile->*"/>
 
-    <dependency org="javax.ws.rs" name="javax.ws.rs-api" rev="${/javax.ws.rs/javax.ws.rs-api}" conf="compile->*"/>
+    <dependency org="javax.ws.rs" name="javax.ws.rs-api" rev="${/javax.ws.rs/javax.ws.rs-api}" conf="compile.jersey->*"/>
+    <dependency org="org.glassfish.jersey.containers" name="jersey-container-servlet" rev="${/org.glassfish.jersey.containers/jersey-container-servlet}" conf="compile.jersey->*"/>
+    <dependency org="org.glassfish.jersey.containers" name="jersey-container-servlet-core" rev="${/org.glassfish.jersey.containers/jersey-container-servlet-core}" conf="compile.jersey->*"/>
 
     <dependency org="joda-time" name="joda-time" rev="${/joda-time/joda-time}" conf="compile->*"/>
     <dependency org="dom4j" name="dom4j" rev="${/dom4j/dom4j}" conf="compile->*"/>

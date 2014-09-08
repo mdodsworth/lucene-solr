@@ -116,6 +116,9 @@ public class SolrDispatchFilter extends BaseSolrFilter {
 
   protected volatile CoreContainer cores;
 
+  // FIXME - mdodsworth: hack to allow access to the container (without having to depend on doFilter)
+  public static volatile CoreContainer CORE_CONTAINER;
+
   protected String pathPrefix = null; // strip this from the beginning of a path
   protected String abortErrorMessage = null;
   protected final HttpClient httpClient = HttpClientUtil.createClient(new ModifiableSolrParams());
@@ -135,6 +138,7 @@ public class SolrDispatchFilter extends BaseSolrFilter {
       this.pathPrefix = config.getInitParameter( "path-prefix" );
 
       this.cores = createCoreContainer();
+      CORE_CONTAINER = this.cores;
       log.info("user.dir=" + System.getProperty("user.dir"));
     }
     catch( Throwable t ) {
