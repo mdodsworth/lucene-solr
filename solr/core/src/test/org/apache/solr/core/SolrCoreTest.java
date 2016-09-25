@@ -63,7 +63,7 @@ public class SolrCoreTest extends SolrTestCaseJ4 {
     core.close();
 
     CoreDescriptor cd = new CoreDescriptor(cores, COLLECTION1, "collection1",
-                                            CoreDescriptor.CORE_DATADIR, createTempDir("dataDir2").getAbsolutePath());
+                                            CoreDescriptor.CORE_DATADIR, createTempDir("dataDir2").toFile().getAbsolutePath());
     
     cores.create(cd);
     
@@ -236,6 +236,14 @@ public class SolrCoreTest extends SolrTestCaseJ4 {
     //try a Req Handler, which are stored by name, not clas
     bean = infoRegistry.get("standard");
     assertNotNull("bean not registered", bean);
+  }
+
+  @Test
+  public void testConfiguration() throws Exception {
+    assertEquals("wrong config for slowQueryThresholdMillis", 2000, solrConfig.slowQueryThresholdMillis);
+    assertEquals("wrong config for maxBooleanClauses", 1024, solrConfig.booleanQueryMaxClauseCount);
+    assertEquals("wrong config for enableLazyFieldLoading", true, solrConfig.enableLazyFieldLoading);
+    assertEquals("wrong config for queryResultWindowSize", 10, solrConfig.queryResultWindowSize);
   }
 
 }

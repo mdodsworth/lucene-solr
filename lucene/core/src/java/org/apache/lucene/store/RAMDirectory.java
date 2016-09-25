@@ -28,12 +28,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 
 
 /**
  * A memory-resident {@link Directory} implementation.  Locking
- * implementation is by default the {@link SingleInstanceLockFactory}
- * but can be changed with {@link #setLockFactory}.
+ * implementation is by default the {@link SingleInstanceLockFactory}.
  * 
  * <p><b>Warning:</b> This class is not intended to work with huge
  * indexes. Everything beyond several hundred megabytes will waste
@@ -51,17 +51,14 @@ public class RAMDirectory extends BaseDirectory implements Accountable {
   protected final Map<String,RAMFile> fileMap = new ConcurrentHashMap<>();
   protected final AtomicLong sizeInBytes = new AtomicLong();
   
-  // *****
-  // Lock acquisition sequence:  RAMDirectory, then RAMFile
-  // ***** 
-
   /** Constructs an empty {@link Directory}. */
   public RAMDirectory() {
-    try {
-      setLockFactory(new SingleInstanceLockFactory());
-    } catch (IOException e) {
-      // Cannot happen
-    }
+    this(new SingleInstanceLockFactory());
+  }
+
+  /** Constructs an empty {@link Directory} with the given {@link LockFactory}. */
+  public RAMDirectory(LockFactory lockFactory) {
+    super(lockFactory);
   }
 
   /**
@@ -105,13 +102,10 @@ public class RAMDirectory extends BaseDirectory implements Accountable {
   }
 
   @Override
-  public String getLockID() {
-    return "lucene-" + Integer.toHexString(hashCode());
-  }
-  
-  @Override
   public final String[] listAll() {
     ensureOpen();
+    // NOTE: this returns a "weakly consistent view". Unless we change Dir API, keep this,
+    // and do not synchronize or anything stronger. its great for testing!
     // NOTE: fileMap.keySet().toArray(new String[0]) is broken in non Sun JDKs,
     // and the code below is resilient to map changes during the array population.
     Set<String> fileNames = fileMap.keySet();
@@ -146,6 +140,11 @@ public class RAMDirectory extends BaseDirectory implements Accountable {
   public final long ramBytesUsed() {
     ensureOpen();
     return sizeInBytes.get();
+  }
+  
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Accountables.namedAccountables("file", fileMap);
   }
   
   /** Removes an existing file in the directory.
@@ -190,6 +189,17 @@ public class RAMDirectory extends BaseDirectory implements Accountable {
   public void sync(Collection<String> names) throws IOException {
   }
 
+  @Override
+  public void renameFile(String source, String dest) throws IOException {
+    ensureOpen();
+    RAMFile file = fileMap.get(source);
+    if (file == null) {
+      throw new FileNotFoundException(source);
+    }
+    fileMap.put(dest, file);
+    fileMap.remove(source);
+  }
+
   /** Returns a stream reading an existing file. */
   @Override
   public IndexInput openInput(String name, IOContext context) throws IOException {
@@ -207,5 +217,4 @@ public class RAMDirectory extends BaseDirectory implements Accountable {
     isOpen = false;
     fileMap.clear();
   }
-  
 }

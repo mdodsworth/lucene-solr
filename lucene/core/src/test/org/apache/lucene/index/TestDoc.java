@@ -16,9 +16,7 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
+
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
@@ -26,6 +24,8 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
@@ -38,20 +38,22 @@ import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FSLockFactory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.TrackingDirectoryWrapper;
 import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.StringHelper;
 import org.apache.lucene.util.Version;
 
 
 /** JUnit adaptation of an older test case DocTest. */
 public class TestDoc extends LuceneTestCase {
 
-    private File workDir;
-    private File indexDir;
-    private LinkedList<File> files;
+    private Path workDir;
+    private Path indexDir;
+    private LinkedList<Path> files;
 
     /** Set the test case. This test case needs
      *  a few text files created in the current working directory.
@@ -63,10 +65,7 @@ public class TestDoc extends LuceneTestCase {
           System.out.println("TEST: setUp");
         }
         workDir = createTempDir("TestDoc");
-        workDir.mkdirs();
-
         indexDir = createTempDir("testIndex");
-        indexDir.mkdirs();
 
         Directory directory = newFSDirectory(indexDir);
         directory.close();
@@ -81,18 +80,18 @@ public class TestDoc extends LuceneTestCase {
         ));
     }
 
-    private File createOutput(String name, String text) throws IOException {
+    private Path createOutput(String name, String text) throws IOException {
         Writer fw = null;
         PrintWriter pw = null;
 
         try {
-            File f = new File(workDir, name);
-            if (f.exists()) f.delete();
+            Path path = workDir.resolve(name);
+            Files.deleteIfExists(path);
 
-            fw = new OutputStreamWriter(new FileOutputStream(f), StandardCharsets.UTF_8);
+            fw = new OutputStreamWriter(Files.newOutputStream(path), StandardCharsets.UTF_8);
             pw = new PrintWriter(fw);
             pw.println(text);
-            return f;
+            return path;
 
         } finally {
             if (pw != null) pw.close();
@@ -113,7 +112,7 @@ public class TestDoc extends LuceneTestCase {
       StringWriter sw = new StringWriter();
       PrintWriter out = new PrintWriter(sw, true);
       
-      Directory directory = newFSDirectory(indexDir, null);
+      Directory directory = newFSDirectory(indexDir);
 
       if (directory instanceof MockDirectoryWrapper) {
         // We create unreferenced files (we don't even write
@@ -157,7 +156,7 @@ public class TestDoc extends LuceneTestCase {
       sw = new StringWriter();
       out = new PrintWriter(sw, true);
 
-      directory = newFSDirectory(indexDir, null);
+      directory = newFSDirectory(indexDir);
 
       if (directory instanceof MockDirectoryWrapper) {
         // We create unreferenced files (we don't even write
@@ -202,9 +201,9 @@ public class TestDoc extends LuceneTestCase {
    private SegmentCommitInfo indexDoc(IndexWriter writer, String fileName)
    throws Exception
    {
-      File file = new File(workDir, fileName);
+      Path path = workDir.resolve(fileName);
       Document doc = new Document();
-      InputStreamReader is = new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8);
+      InputStreamReader is = new InputStreamReader(Files.newInputStream(path), StandardCharsets.UTF_8);
       doc.add(new TextField("contents", is));
       writer.addDocument(doc);
       writer.commit();
@@ -221,29 +220,26 @@ public class TestDoc extends LuceneTestCase {
 
       final Codec codec = Codec.getDefault();
       TrackingDirectoryWrapper trackingDir = new TrackingDirectoryWrapper(si1.info.dir);
-      final SegmentInfo si = new SegmentInfo(si1.info.dir, Version.LATEST, merged, -1, false, codec, null);
+      final SegmentInfo si = new SegmentInfo(si1.info.dir, Version.LATEST, merged, -1, false, codec, null, StringHelper.randomId());
 
-      SegmentMerger merger = new SegmentMerger(Arrays.<AtomicReader>asList(r1, r2),
+      SegmentMerger merger = new SegmentMerger(Arrays.<LeafReader>asList(r1, r2),
           si, InfoStream.getDefault(), trackingDir,
-          MergeState.CheckAbort.NONE, new FieldInfos.FieldNumbers(), context, true);
+          MergeState.CheckAbort.NONE, new FieldInfos.FieldNumbers(), context);
 
       MergeState mergeState = merger.merge();
       r1.close();
-      r2.close();
-      final SegmentInfo info = new SegmentInfo(si1.info.dir, Version.LATEST, merged,
-                                               si1.info.getDocCount() + si2.info.getDocCount(),
-                                               false, codec, null);
-      info.setFiles(new HashSet<>(trackingDir.getCreatedFiles()));
+      r2.close();;
+      si.setFiles(new HashSet<>(trackingDir.getCreatedFiles()));
       
       if (useCompoundFile) {
-        Collection<String> filesToDelete = IndexWriter.createCompoundFile(InfoStream.getDefault(), dir, MergeState.CheckAbort.NONE, info, newIOContext(random()));
-        info.setUseCompoundFile(true);
+        Collection<String> filesToDelete = IndexWriter.createCompoundFile(InfoStream.getDefault(), dir, MergeState.CheckAbort.NONE, si, newIOContext(random()));
+        si.setUseCompoundFile(true);
         for (final String fileToDelete : filesToDelete) {
           si1.info.dir.deleteFile(fileToDelete);
         }
       }
 
-      return new SegmentCommitInfo(info, 0, -1L, -1L, -1L);
+      return new SegmentCommitInfo(si, 0, -1L, -1L, -1L);
    }
 
 

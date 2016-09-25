@@ -18,8 +18,9 @@ package org.apache.lucene.search.suggest.fst;
  */
 
 import java.io.Closeable;
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Comparator;
 
 import org.apache.lucene.util.BytesRef;
@@ -35,16 +36,15 @@ import org.apache.lucene.util.OfflineSorter;
 public class ExternalRefSorter implements BytesRefSorter, Closeable {
   private final OfflineSorter sort;
   private OfflineSorter.ByteSequencesWriter writer;
-  private File input;
-  private File sorted;
+  private Path input;
+  private Path sorted;
   
   /**
    * Will buffer all sequences to a temporary file and then sort (all on-disk).
    */
   public ExternalRefSorter(OfflineSorter sort) throws IOException {
     this.sort = sort;
-    this.input = File.createTempFile("RefSorter-", ".raw",
-        OfflineSorter.defaultTempDir());
+    this.input = Files.createTempFile(OfflineSorter.defaultTempDir(), "RefSorter-", ".raw");
     this.writer = new OfflineSorter.ByteSequencesWriter(input);
   }
   
@@ -59,11 +59,19 @@ public class ExternalRefSorter implements BytesRefSorter, Closeable {
     if (sorted == null) {
       closeWriter();
       
-      sorted = File.createTempFile("RefSorter-", ".sorted",
-          OfflineSorter.defaultTempDir());
-      sort.sort(input, sorted);
+      sorted = Files.createTempFile(OfflineSorter.defaultTempDir(), "RefSorter-", ".sorted");
+      boolean success = false;
+      try {
+        sort.sort(input, sorted);
+        success = true;
+      } finally {
+        if (success) {
+          Files.delete(input);
+        } else {
+          IOUtils.deleteFilesIgnoringExceptions(input);
+        }
+      }
       
-      input.delete();
       input = null;
     }
     
@@ -82,11 +90,16 @@ public class ExternalRefSorter implements BytesRefSorter, Closeable {
    */
   @Override
   public void close() throws IOException {
+    boolean success = false;
     try {
       closeWriter();
+      success = true;
     } finally {
-      if (input != null) input.delete();
-      if (sorted != null) sorted.delete();
+      if (success) {
+        IOUtils.deleteFilesIfExist(input, sorted);
+      } else {
+        IOUtils.deleteFilesIgnoringExceptions(input, sorted);
+      }
     }
   }
   

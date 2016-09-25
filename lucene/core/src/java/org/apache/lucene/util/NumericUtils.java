@@ -24,7 +24,7 @@ import org.apache.lucene.document.DoubleField; // javadocs
 import org.apache.lucene.document.FloatField; // javadocs
 import org.apache.lucene.document.IntField; // javadocs
 import org.apache.lucene.document.LongField; // javadocs
-import org.apache.lucene.index.FilterAtomicReader;
+import org.apache.lucene.index.FilterLeafReader;
 import org.apache.lucene.index.FilteredTermsEnum;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
@@ -143,8 +143,10 @@ public final class NumericUtils {
    * @param bytes will contain the encoded value
    */
   public static void longToPrefixCodedBytes(final long val, final int shift, final BytesRefBuilder bytes) {
-    if ((shift & ~0x3f) != 0)  // ensure shift is 0..63
-      throw new IllegalArgumentException("Illegal shift value, must be 0..63");
+    // ensure shift is 0..63
+    if ((shift & ~0x3f) != 0) {
+      throw new IllegalArgumentException("Illegal shift value, must be 0..63; got shift=" + shift);
+    }
     int nChars = (((63-shift)*37)>>8) + 1;    // i/7 is the same as (i*37)>>8 for i in 0..63
     bytes.setLength(nChars+1);   // one extra for the byte that contains the shift info
     bytes.grow(BUF_SIZE_LONG);
@@ -169,8 +171,10 @@ public final class NumericUtils {
    * @param bytes will contain the encoded value
    */
   public static void intToPrefixCodedBytes(final int val, final int shift, final BytesRefBuilder bytes) {
-    if ((shift & ~0x1f) != 0)  // ensure shift is 0..31
-      throw new IllegalArgumentException("Illegal shift value, must be 0..31");
+    // ensure shift is 0..31
+    if ((shift & ~0x1f) != 0) {
+      throw new IllegalArgumentException("Illegal shift value, must be 0..31; got shift=" + shift);
+    }
     int nChars = (((31-shift)*37)>>8) + 1;    // i/7 is the same as (i*37)>>8 for i in 0..63
     bytes.setLength(nChars+1);   // one extra for the byte that contains the shift info
     bytes.grow(NumericUtils.BUF_SIZE_LONG);  // use the max
@@ -532,7 +536,7 @@ public final class NumericUtils {
   }
 
   private static Terms intTerms(Terms terms) {
-    return new FilterAtomicReader.FilterTerms(terms) {
+    return new FilterLeafReader.FilterTerms(terms) {
         @Override
         public TermsEnum iterator(TermsEnum reuse) throws IOException {
           return filterPrefixCodedInts(in.iterator(reuse));
@@ -541,7 +545,7 @@ public final class NumericUtils {
   }
 
   private static Terms longTerms(Terms terms) {
-    return new FilterAtomicReader.FilterTerms(terms) {
+    return new FilterLeafReader.FilterTerms(terms) {
         @Override
         public TermsEnum iterator(TermsEnum reuse) throws IOException {
           return filterPrefixCodedLongs(in.iterator(reuse));

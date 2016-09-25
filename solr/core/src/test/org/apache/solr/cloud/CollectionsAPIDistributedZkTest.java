@@ -255,10 +255,14 @@ public class CollectionsAPIDistributedZkTest extends AbstractFullDistribZkTestBa
     Map<String, NamedList<Integer>> coresStatus;
     Map<String, NamedList<Integer>> nodesStatus;
 
-    response = CollectionAdminRequest.createCollection("solrj_collection",
-                                                       2, 2, null,
-                                                       null, "conf1", "myOwnField",
-                                                       server);
+    CollectionAdminRequest.Create createCollectionRequest = new CollectionAdminRequest.Create();
+    createCollectionRequest.setCollectionName("solrj_collection");
+    createCollectionRequest.setNumShards(2);
+    createCollectionRequest.setReplicationFactor(2);
+    createCollectionRequest.setConfigName("conf1");
+    createCollectionRequest.setRouterField("myOwnField");
+    response = createCollectionRequest.process(server);
+
     assertEquals(0, response.getStatus());
     assertTrue(response.isSuccess());
     coresStatus = response.getCollectionCoresStatus();
@@ -269,59 +273,104 @@ public class CollectionsAPIDistributedZkTest extends AbstractFullDistribZkTestBa
       assertTrue(status.get("QTime") > 0);
     }
 
-    response = CollectionAdminRequest.createCollection("solrj_implicit",
-                                                       "shardA,shardB", "conf1", server);
+    // TODO: This test tries to validates defaulting to implicit router.
+    createCollectionRequest = new CollectionAdminRequest.Create();
+    createCollectionRequest.setCollectionName("solrj_implicit");
+    createCollectionRequest.setShards("shardA,shardB");
+    createCollectionRequest.setConfigName("conf1");
+    createCollectionRequest.setRouterName("implicit");
+    response = createCollectionRequest.process(server);
+
     assertEquals(0, response.getStatus());
     assertTrue(response.isSuccess());
     coresStatus = response.getCollectionCoresStatus();
     assertEquals(2, coresStatus.size());
 
-    response = CollectionAdminRequest.createShard("solrj_implicit", "shardC", server);
+    CollectionAdminRequest.CreateShard createShardRequest = new CollectionAdminRequest
+        .CreateShard();
+    createShardRequest.setCollectionName("solrj_implicit");
+    createShardRequest.setShardName("shardC");
+    response = createShardRequest.process(server);
+
     assertEquals(0, response.getStatus());
     assertTrue(response.isSuccess());
     coresStatus = response.getCollectionCoresStatus();
     assertEquals(1, coresStatus.size());
     assertEquals(0, (int) coresStatus.get("solrj_implicit_shardC_replica1").get("status"));
 
-    response = CollectionAdminRequest.deleteShard("solrj_implicit", "shardC", server);
+    CollectionAdminRequest.DeleteShard deleteShardRequest = new CollectionAdminRequest
+        .DeleteShard();
+    deleteShardRequest.setCollectionName("solrj_implicit");
+    deleteShardRequest.setShardName("shardC");
+    response = deleteShardRequest.process(server);
+
     assertEquals(0, response.getStatus());
     assertTrue(response.isSuccess());
     nodesStatus = response.getCollectionNodesStatus();
     assertEquals(1, nodesStatus.size());
 
-    response = CollectionAdminRequest.deleteCollection("solrj_implicit", server);
+    CollectionAdminRequest.Delete deleteCollectionRequest = new CollectionAdminRequest.Delete();
+    deleteCollectionRequest.setCollectionName("solrj_implicit");
+    response = deleteCollectionRequest.process(server);
+
     assertEquals(0, response.getStatus());
     assertTrue(response.isSuccess());
     nodesStatus = response.getCollectionNodesStatus();
     assertEquals(2, nodesStatus.size());
 
-    response = CollectionAdminRequest.createCollection("conf1", 4, "conf1", server);
+    createCollectionRequest = new CollectionAdminRequest.Create();
+    createCollectionRequest.setCollectionName("conf1");
+    createCollectionRequest.setNumShards(4);
+    createCollectionRequest.setConfigName("conf1");
+    response = createCollectionRequest.process(server);
+
     assertEquals(0, response.getStatus());
     assertTrue(response.isSuccess());
 
-    response = CollectionAdminRequest.reloadCollection("conf1", server);
+    CollectionAdminRequest.Reload reloadCollectionRequest = new CollectionAdminRequest.Reload();
+    reloadCollectionRequest.setCollectionName("conf1");
+    response = reloadCollectionRequest.process(server);
+
     assertEquals(0, response.getStatus());
 
-    response = CollectionAdminRequest.createAlias("solrj_alias", "conf1,solrj_collection", server);
+    CollectionAdminRequest.CreateAlias createAliasRequest = new CollectionAdminRequest
+        .CreateAlias();
+    createAliasRequest.setCollectionName("solrj_alias");
+    createAliasRequest.setAliasedCollections("conf1,solrj_collection");
+    response = createAliasRequest.process(server);
+
     assertEquals(0, response.getStatus());
 
-    response = CollectionAdminRequest.deleteAlias("solrj_alias", server);
+    CollectionAdminRequest.DeleteAlias deleteAliasRequest = new CollectionAdminRequest.DeleteAlias();
+    deleteAliasRequest.setCollectionName("solrj_alias");
+    deleteAliasRequest.process(server);
+
     assertEquals(0, response.getStatus());
 
-    response = CollectionAdminRequest.splitShard("conf1", "shard1", server);
+    CollectionAdminRequest.SplitShard splitShardRequest = new CollectionAdminRequest.SplitShard();
+    splitShardRequest.setCollectionName("conf1");
+    splitShardRequest.setShardName("shard1");
+    response = splitShardRequest.process(server);
+
     assertEquals(0, response.getStatus());
     assertTrue(response.isSuccess());
     coresStatus = response.getCollectionCoresStatus();
     assertEquals(0, (int) coresStatus.get("conf1_shard1_0_replica1").get("status"));
-    assertEquals(0, (int) coresStatus.get("conf1_shard1_0_replica1").get("status"));
+    assertEquals(0, (int) coresStatus.get("conf1_shard1_1_replica1").get("status"));
 
-    response = CollectionAdminRequest.deleteCollection("conf1", server);
+    deleteCollectionRequest = new CollectionAdminRequest.Delete();
+    deleteCollectionRequest.setCollectionName("conf1");
+    response = deleteCollectionRequest.process(server);
+
     assertEquals(0, response.getStatus());
     nodesStatus = response.getCollectionNodesStatus();
     assertTrue(response.isSuccess());
     assertEquals(4, nodesStatus.size());
 
-    response = CollectionAdminRequest.deleteCollection("solrj_collection", server);
+    deleteCollectionRequest = new CollectionAdminRequest.Delete();
+    deleteCollectionRequest.setCollectionName("solrj_collection");
+    deleteCollectionRequest.process(server);
+
     assertEquals(0, response.getStatus());
     nodesStatus = response.getCollectionNodesStatus();
     assertTrue(response.isSuccess());
@@ -335,7 +384,7 @@ public class CollectionsAPIDistributedZkTest extends AbstractFullDistribZkTestBa
     Create createCmd = new Create();
     createCmd.setCoreName("halfdeletedcollection_shard1_replica1");
     createCmd.setCollection(collectionName);
-    String dataDir = createTempDir().getAbsolutePath();
+    String dataDir = createTempDir().toFile().getAbsolutePath();
     createCmd.setDataDir(dataDir);
     createCmd.setNumShards(2);
     if (secondConfigSet) {
@@ -470,7 +519,6 @@ public class CollectionsAPIDistributedZkTest extends AbstractFullDistribZkTestBa
     request = new QueryRequest(params);
     request.setPath("/admin/collections");
     gotExp = false;
-    resp = null;
     try {
       resp = createNewSolrServer("", baseUrl).request(request);
     } catch (SolrException e) {
@@ -526,7 +574,7 @@ public class CollectionsAPIDistributedZkTest extends AbstractFullDistribZkTestBa
     Create createCmd = new Create();
     createCmd.setCoreName("halfcollection_shard1_replica1");
     createCmd.setCollection("halfcollectionblocker");
-    String dataDir = createTempDir().getAbsolutePath();
+    String dataDir = createTempDir().toFile().getAbsolutePath();
     createCmd.setDataDir(dataDir);
     createCmd.setNumShards(1);
     if (secondConfigSet) {
@@ -537,7 +585,7 @@ public class CollectionsAPIDistributedZkTest extends AbstractFullDistribZkTestBa
     createCmd = new Create();
     createCmd.setCoreName("halfcollection_shard1_replica1");
     createCmd.setCollection("halfcollectionblocker2");
-    dataDir = createTempDir().getAbsolutePath();
+    dataDir = createTempDir().toFile().getAbsolutePath();
     createCmd.setDataDir(dataDir);
     createCmd.setNumShards(1);
     if (secondConfigSet) {
@@ -586,7 +634,7 @@ public class CollectionsAPIDistributedZkTest extends AbstractFullDistribZkTestBa
     Create createCmd = new Create();
     createCmd.setCoreName("corewithnocollection");
     createCmd.setCollection("");
-    String dataDir = createTempDir().getAbsolutePath();
+    String dataDir = createTempDir().toFile().getAbsolutePath();
     createCmd.setDataDir(dataDir);
     createCmd.setNumShards(1);
     if (secondConfigSet) {
@@ -984,25 +1032,18 @@ public class CollectionsAPIDistributedZkTest extends AbstractFullDistribZkTestBa
               client = createCloudClient(null);
             } else if (i == 1) {
               client = createCloudClient(collectionName);
+            } else  {
+              client = createCloudClient(null);
             }
             
             createCollection(collectionInfos, collectionName,
                 numShards, replicationFactor, maxShardsPerNode, client, null,
                 "conf1");
-            
+
             // remove collection
-            ModifiableSolrParams params = new ModifiableSolrParams();
-            params.set("action", CollectionAction.DELETE.toString());
-            params.set("name", collectionName);
-            QueryRequest request = new QueryRequest(params);
-            request.setPath("/admin/collections");
-            
-            if (client == null) {
-              client = createCloudClient(null);
-            }
-            
-            client.request(request);
-            
+            CollectionAdminRequest.Delete delete = new CollectionAdminRequest.Delete();
+            delete.setCollectionName(collectionName);
+            client.request(delete);
           } catch (SolrServerException e) {
             e.printStackTrace();
             throw new RuntimeException(e);
@@ -1218,7 +1259,7 @@ public class CollectionsAPIDistributedZkTest extends AbstractFullDistribZkTestBa
       createCollection(collectionName, client, 2, 2);
       String newReplicaName = Assign.assignNode(collectionName, client.getZkStateReader().getClusterState());
       ArrayList<String> nodeList = new ArrayList<>(client.getZkStateReader().getClusterState().getLiveNodes());
-      Collections.shuffle(nodeList);
+      Collections.shuffle(nodeList, random());
       CollectionAdminRequest.AddReplica addReplica = new CollectionAdminRequest.AddReplica();
       addReplica.setCollectionName(collectionName);
       addReplica.setShardName("shard1");

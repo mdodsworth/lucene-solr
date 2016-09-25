@@ -22,7 +22,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.StoredDocument;
@@ -83,14 +83,12 @@ public class TestStressLucene extends TestRTGBase {
 
 
     final FieldType idFt = new FieldType();
-    idFt.setIndexed(true);
     idFt.setStored(true);
     idFt.setOmitNorms(true);
     idFt.setTokenized(false);
-    idFt.setIndexOptions(FieldInfo.IndexOptions.DOCS_ONLY);
+    idFt.setIndexOptions(IndexOptions.DOCS);
 
     final FieldType ft2 = new FieldType();
-    ft2.setIndexed(false);
     ft2.setStored(true);
 
 

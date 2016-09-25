@@ -39,7 +39,7 @@ import org.apache.lucene.facet.sortedset.SortedSetDocValuesReaderState;
 import org.apache.lucene.facet.taxonomy.TaxonomyReader;
 import org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyReader;
 import org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyWriter;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.RandomIndexWriter;
@@ -58,6 +58,7 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BitDocIdSet;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.InPlaceMergeSorter;
@@ -401,8 +402,6 @@ public class TestDrillSideways extends FacetTestCase {
 
   public void testRandom() throws Exception {
 
-    boolean canUseDV = defaultCodecSupportsSortedSet();
-
     while (aChance == 0.0) {
       aChance = random().nextDouble();
     }
@@ -490,7 +489,7 @@ public class TestDrillSideways extends FacetTestCase {
       config.setMultiValued("dim"+i, true);
     }
 
-    boolean doUseDV = canUseDV && random().nextBoolean();
+    boolean doUseDV = random().nextBoolean();
 
     for(Doc rawDoc : docs) {
       Document doc = new Document();
@@ -650,7 +649,7 @@ public class TestDrillSideways extends FacetTestCase {
         }
         filter = new Filter() {
             @Override
-            public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) throws IOException {
+            public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) throws IOException {
               int maxDoc = context.reader().maxDoc();
               final FixedBitSet bits = new FixedBitSet(maxDoc);
               for(int docID=0;docID < maxDoc;docID++) {
@@ -659,7 +658,7 @@ public class TestDrillSideways extends FacetTestCase {
                   bits.set(docID);
                 }
               }
-              return bits;
+              return new BitDocIdSet(bits);
             }
           };
       } else {
@@ -680,7 +679,7 @@ public class TestDrillSideways extends FacetTestCase {
                              }
 
                              @Override
-                             protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+                             protected void doSetNextReader(LeafReaderContext context) throws IOException {
                                lastDocID = -1;
                              }
 

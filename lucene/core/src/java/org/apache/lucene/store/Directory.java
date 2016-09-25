@@ -37,8 +37,7 @@ import org.apache.lucene.util.IOUtils;
  * </ul>
  *
  * Directory locking is implemented by an instance of {@link
- * LockFactory}, and can be changed for each Directory
- * instance using {@link #setLockFactory}.
+ * LockFactory}.
  *
  */
 public abstract class Directory implements Closeable {
@@ -46,9 +45,7 @@ public abstract class Directory implements Closeable {
   /**
    * Returns an array of strings, one for each file in the directory.
    * 
-   * @throws NoSuchDirectoryException if the directory is not prepared for any
-   *         write operations (such as {@link #createOutput(String, IOContext)}).
-   * @throws IOException in case of other IO errors
+   * @throws IOException in case of IO error
    */
   public abstract String[] listAll() throws IOException;
 
@@ -89,13 +86,20 @@ public abstract class Directory implements Closeable {
    * reasons.
    */
   public abstract void sync(Collection<String> names) throws IOException;
-
-  /** Returns a stream reading an existing file, with the
-   * specified read buffer size.  The particular Directory
-   * implementation may ignore the buffer size.  Currently
-   * the only Directory implementations that respect this
-   * parameter are {@link FSDirectory} and {@link
-   * CompoundFileDirectory}.
+  
+  /**
+   * Renames {@code source} to {@code dest} as an atomic operation,
+   * where {@code dest} does not yet exist in the directory.
+   * <p>
+   * Notes: This method is used by IndexWriter to publish commits.
+   * It is ok if this operation is not truly atomic, for example
+   * both {@code source} and {@code dest} can be visible temporarily.
+   * It is just important that the contents of {@code dest} appear
+   * atomically, or an exception is thrown.
+   */
+  public abstract void renameFile(String source, String dest) throws IOException;
+  
+  /** Returns a stream reading an existing file.
    * <p>Throws {@link FileNotFoundException} or {@link NoSuchFileException}
    * if the file does not exist.
    */
@@ -111,53 +115,14 @@ public abstract class Directory implements Closeable {
    */
   public abstract Lock makeLock(String name);
 
-  /**
-   * Attempt to clear (forcefully unlock and remove) the
-   * specified lock.  Only call this at a time when you are
-   * certain this lock is no longer in use.
-   * @param name name of the lock to be cleared.
-   */
-  public abstract void clearLock(String name) throws IOException;
-
   /** Closes the store. */
   @Override
   public abstract void close()
        throws IOException;
 
-  /**
-   * Set the LockFactory that this Directory instance should
-   * use for its locking implementation.  Each * instance of
-   * LockFactory should only be used for one directory (ie,
-   * do not share a single instance across multiple
-   * Directories).
-   *
-   * @param lockFactory instance of {@link LockFactory}.
-   */
-  public abstract void setLockFactory(LockFactory lockFactory) throws IOException;
-
-  /**
-   * Get the LockFactory that this Directory instance is
-   * using for its locking implementation.  Note that this
-   * may be null for Directory implementations that provide
-   * their own locking implementation.
-   */
-  public abstract LockFactory getLockFactory();
-
-  /**
-   * Return a string identifier that uniquely differentiates
-   * this Directory instance from other Directory instances.
-   * This ID should be the same if two Directory instances
-   * (even in different JVMs and/or on different machines)
-   * are considered "the same index".  This is how locking
-   * "scopes" to the right index.
-   */
-  public String getLockID() {
-    return this.toString();
-  }
-
   @Override
   public String toString() {
-    return getClass().getSimpleName() + '@' + Integer.toHexString(hashCode()) + " lockFactory=" + getLockFactory();
+    return getClass().getSimpleName() + '@' + Integer.toHexString(hashCode());
   }
 
   /**

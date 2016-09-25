@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.lucene.util.LuceneTestCase.Slow;
+import org.apache.solr.SolrJettyTestBase;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.cloud.SolrZkClient;
 import org.apache.solr.common.cloud.ZkNodeProps;
@@ -84,7 +85,7 @@ public class ZkControllerTest extends SolrTestCaseJ4 {
                  ZkController.generateNodeName("foo-bar", "77", "/solr/sub_dir/"));
 
     // setup a SolrZkClient to do some getBaseUrlForNodeName testing
-    String zkDir = createTempDir("zkData").getAbsolutePath();
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
 
     ZkTestServer server = new ZkTestServer(zkDir);
     try {
@@ -154,7 +155,7 @@ public class ZkControllerTest extends SolrTestCaseJ4 {
 
   @Test
   public void testReadConfigName() throws Exception {
-    String zkDir = createTempDir("zkData").getAbsolutePath();
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
     CoreContainer cc = null;
 
     ZkTestServer server = new ZkTestServer(zkDir);
@@ -209,7 +210,7 @@ public class ZkControllerTest extends SolrTestCaseJ4 {
 
   @Test
   public void testUploadToCloud() throws Exception {
-    String zkDir = createTempDir("zkData").getAbsolutePath();
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
 
     ZkTestServer server = new ZkTestServer(zkDir);
     ZkController zkController = null;
@@ -232,11 +233,13 @@ public class ZkControllerTest extends SolrTestCaseJ4 {
             }
           });
 
-      zkController.uploadToZK(new File(ExternalPaths.EXAMPLE_HOME + "/collection1/conf"),
+      String solrHome = SolrJettyTestBase.legacyExampleCollection1SolrHome();
+
+      zkController.uploadToZK(new File(solrHome + "/collection1/conf"),
           ZkController.CONFIGS_ZKNODE + "/config1");
       
       // uploading again should overwrite, not error...
-      zkController.uploadToZK(new File(ExternalPaths.EXAMPLE_HOME + "/collection1/conf"),
+      zkController.uploadToZK(new File(solrHome + "/collection1/conf"),
           ZkController.CONFIGS_ZKNODE + "/config1");
 
       if (DEBUG) {
@@ -261,7 +264,7 @@ public class ZkControllerTest extends SolrTestCaseJ4 {
 
   @Test
   public void testGetHostName() throws Exception {
-    String zkDir = createTempDir("zkData").getAbsolutePath();
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
     CoreContainer cc = null;
 
     ZkTestServer server = new ZkTestServer(zkDir);

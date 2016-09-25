@@ -238,7 +238,7 @@ def checkAllJARs(topDir, project, svnRevision, version, tmpDir, baseURL):
 
     normRoot = normSlashes(root)
 
-    if project == 'solr' and normRoot.endswith('/example/lib'):
+    if project == 'solr' and normRoot.endswith('/server/lib'):
       # Solr's example intentionally ships servlet JAR:
       continue
     
@@ -628,6 +628,7 @@ def verifyUnpacked(java, project, artifact, unpackPath, svnRevision, version, te
 
   os.chdir(unpackPath)
   isSrc = artifact.find('-src') != -1
+  
   l = os.listdir(unpackPath)
   textFiles = ['LICENSE', 'NOTICE', 'README']
   if project == 'lucene':
@@ -636,7 +637,7 @@ def verifyUnpacked(java, project, artifact, unpackPath, svnRevision, version, te
       textFiles.append('BUILD')
   elif not isSrc:
     textFiles.append('SYSTEM_REQUIREMENTS')
-    
+
   for fileName in textFiles:
     fileName += '.txt'
     if fileName not in l:
@@ -669,9 +670,9 @@ def verifyUnpacked(java, project, artifact, unpackPath, svnRevision, version, te
 
   if project == 'lucene':
     # TODO: clean this up to not be a list of modules that we must maintain
-    extras = ('analysis', 'benchmark', 'classification', 'codecs', 'core', 'demo', 'docs', 'expressions', 'facet', 'grouping', 'highlighter', 'join', 'memory', 'misc', 'queries', 'queryparser', 'replicator', 'sandbox', 'spatial', 'suggest', 'test-framework', 'licenses')
+    extras = ('analysis', 'backward-codecs', 'benchmark', 'classification', 'codecs', 'core', 'demo', 'docs', 'expressions', 'facet', 'grouping', 'highlighter', 'join', 'memory', 'misc', 'queries', 'queryparser', 'replicator', 'sandbox', 'spatial', 'suggest', 'test-framework', 'licenses')
     if isSrc:
-      extras += ('build.xml', 'common-build.xml', 'module-build.xml', 'ivy-settings.xml', 'ivy-versions.properties', 'ivy-ignore-conflicts.properties', 'version.properties', 'backwards', 'tools', 'site')
+      extras += ('build.xml', 'common-build.xml', 'module-build.xml', 'ivy-settings.xml', 'ivy-versions.properties', 'ivy-ignore-conflicts.properties', 'version.properties', 'tools', 'site')
   else:
     extras = ()
 
@@ -760,7 +761,7 @@ def verifyUnpacked(java, project, artifact, unpackPath, svnRevision, version, te
   else:
 
     checkAllJARs(os.getcwd(), project, svnRevision, version, tmpDir, baseURL)
-    
+
     if project == 'lucene':
       testDemo(java.run_java7, isSrc, version, '1.7')
       if java.run_java8:
@@ -770,7 +771,7 @@ def verifyUnpacked(java, project, artifact, unpackPath, svnRevision, version, te
       checkJavadocpath('%s/docs' % unpackPath)
 
     else:
-      checkSolrWAR('%s/example/webapps/solr.war' % unpackPath, svnRevision, version, tmpDir, baseURL)
+      checkSolrWAR('%s/server/webapps/solr.war' % unpackPath, svnRevision, version, tmpDir, baseURL)
 
       print('    copying unpacked distribution for Java 7 ...')
       java7UnpackPath = '%s-java7' % unpackPath
@@ -794,6 +795,11 @@ def verifyUnpacked(java, project, artifact, unpackPath, svnRevision, version, te
       os.chdir(unpackPath)
 
   testChangesText('.', version, project)
+
+  if project == 'lucene' and isSrc:
+    print('  confirm all releases have coverage in TestBackwardsCompatibility')
+    confirmAllReleasesAreTestedForBackCompat(unpackPath)
+    
 
 def testNotice(unpackPath):
   solrNotice = open('%s/NOTICE.txt' % unpackPath, encoding='UTF-8').read()
@@ -842,13 +848,26 @@ def readSolrOutput(p, startupEvent, failureEvent, logFile):
     
 def testSolrExample(unpackPath, javaPath, isSrc):
   logFile = '%s/solr-example.log' % unpackPath
-  os.chdir('example')
+  if isSrc:
+    os.chdir(unpackPath+'/solr')
+    subprocess.call(['chmod','+x',unpackPath+'/solr/bin/solr'])
+  else:
+    os.chdir(unpackPath)
+
   print('      start Solr instance (log=%s)...' % logFile)
   env = {}
   env.update(os.environ)
   env['JAVA_HOME'] = javaPath
   env['PATH'] = '%s/bin:%s' % (javaPath, env['PATH'])
-  server = subprocess.Popen(['java', '-jar', 'start.jar'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE, env=env)
+
+  # Stop Solr running on port 8983 (in case a previous run didn't shutdown cleanly)
+  try:
+      subprocess.call(['bin/solr','stop','-p','8983'])
+  except:
+      print('      Stop failed due to: '+sys.exc_info()[0])
+
+  print('      starting Solr on port 8983 from %s' % unpackPath)
+  server = subprocess.Popen(['bin/solr', '-f', '-p', '8983'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE, env=env)
 
   startupEvent = threading.Event()
   failureEvent = threading.Event()
@@ -870,20 +889,26 @@ def testSolrExample(unpackPath, javaPath, isSrc):
       raise RuntimeError('failure on startup; see log %s' % logFile)
 
     print('      startup done')
-
+    # Create the techproducts config (used to be collection1)
+    subprocess.call(['bin/solr','create_core','-n','techproducts','-c','sample_techproducts_configs'])
+    os.chdir('example')
     print('      test utf8...')
-    run('sh ./exampledocs/test_utf8.sh', 'utf8.log')
+    run('sh ./exampledocs/test_utf8.sh http://localhost:8983/solr/techproducts', 'utf8.log')
     print('      index example docs...')
-    run('sh ./exampledocs/post.sh ./exampledocs/*.xml', 'post-example-docs.log')
+    run('java -Durl=http://localhost:8983/solr/techproducts/update -jar ./exampledocs/post.jar ./exampledocs/*.xml', 'post-example-docs.log')
     print('      run query...')
-    s = urllib.request.urlopen('http://localhost:8983/solr/select/?q=video').read().decode('UTF-8')
+    s = urllib.request.urlopen('http://localhost:8983/solr/techproducts/select/?q=video').read().decode('UTF-8')
     if s.find('<result name="response" numFound="3" start="0">') == -1:
       print('FAILED: response is:\n%s' % s)
       raise RuntimeError('query on solr example instance failed')
   finally:
     # Stop server:
-    print('      stop server (SIGINT)...')
-    os.kill(server.pid, signal.SIGINT)
+    print('      stop server using: bin/solr stop -p 8983')
+    if isSrc:
+      os.chdir(unpackPath+'/solr')
+    else:
+      os.chdir(unpackPath)
+    subprocess.call(['bin/solr','stop','-p','8983'])
 
     # Give it 10 seconds to gracefully shut down
     serverThread.join(10.0)
@@ -901,8 +926,11 @@ def testSolrExample(unpackPath, javaPath, isSrc):
 
   if failureEvent.isSet():
     raise RuntimeError('exception while reading Solr output')
-    
-  os.chdir('..')
+
+  if isSrc:
+    os.chdir(unpackPath+'/solr')
+  else:
+    os.chdir(unpackPath)
     
 # the weaker check: we can use this on java6 for some checks,
 # but its generated HTML is hopelessly broken so we cannot run
@@ -1290,7 +1318,7 @@ revision_re = re.compile(r'rev(\d+)')
 def parse_config():
   epilogue = textwrap.dedent('''
     Example usage:
-    python3.2 -u dev-tools/scripts/smokeTestRelease.py http://people.apache.org/~whoever/staging_area/lucene-solr-4.3.0-RC1-rev1469340')
+    python3.2 -u dev-tools/scripts/smokeTestRelease.py http://people.apache.org/~whoever/staging_area/lucene-solr-4.3.0-RC1-rev1469340
   ''')
   description = 'Utility to test a release.'
   parser = argparse.ArgumentParser(description=description, epilog=epilogue,
@@ -1339,11 +1367,110 @@ def parse_config():
 
   return c
 
+reVersion1 = re.compile(r'\>(\d+)\.(\d+)\.(\d+)(-alpha|-beta)?/\<', re.IGNORECASE)
+reVersion2 = re.compile(r'-(\d+)\.(\d+)\.(\d+)(-alpha|-beta)?\.', re.IGNORECASE)
+
+def getAllLuceneReleases():
+  s = urllib.request.urlopen('https://archive.apache.org/dist/lucene/java').read().decode('UTF-8')
+
+  releases = set()
+  for r in reVersion1, reVersion2:
+    for tup in r.findall(s):
+      if tup[-1].lower() == '-alpha':
+        tup = tup[:3] + ('0',)
+      elif tup[-1].lower() == '-beta':
+        tup = tup[:3] + ('1',)
+      elif tup[-1] == '':
+        tup = tup[:3]
+      else:
+        raise RuntimeError('failed to parse version: %s' % tup[-1])
+      releases.add(tuple(int(x) for x in tup))
+
+  l = list(releases)
+  l.sort()
+  return l
+
+def confirmAllReleasesAreTestedForBackCompat(unpackPath):
+
+  print('    find all past Lucene releases...')
+  allReleases = getAllLuceneReleases()
+  #for tup in allReleases:
+  #  print('  %s' % '.'.join(str(x) for x in tup))
+
+  testedIndices = set()
+
+  os.chdir(unpackPath)
+
+  for suffix in '',:
+    print('    run TestBackwardsCompatibility%s..' % suffix)
+    command = 'ant test -Dtestcase=TestBackwardsCompatibility%s -Dtests.verbose=true' % suffix
+    p = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    stdout, stderr = p.communicate()
+    if p.returncode is not 0:
+      # Not good: the test failed!
+      raise RuntimeError('%s failed:\n%s' % (command, stdout))
+    stdout = stdout.decode('utf-8')
+
+    if stderr is not None:
+      # Should not happen since we redirected stderr to stdout:
+      raise RuntimeError('stderr non-empty')
+
+    reIndexName = re.compile(r'TEST: index[\s*=\s*](.*?)(-cfs|-nocfs)$', re.MULTILINE)
+    for name, cfsPart in reIndexName.findall(stdout):
+      # Fragile: decode the inconsistent naming schemes we've used in TestBWC's indices:
+      #print('parse name %s' % name)
+      tup = tuple(name.split('.'))
+      if len(tup) == 3:
+        # ok
+        tup = tuple(int(x) for x in tup)
+      elif tup == ('4', '0', '0', '1'):
+        # CONFUSING: this is the 4.0.0-alpha index??
+        tup = 4, 0, 0, 0
+      elif tup == ('4', '0', '0', '2'):
+        # CONFUSING: this is the 4.0.0-beta index??
+        tup = 4, 0, 0, 1
+      else:
+        raise RuntimeError('could not parse version %s' % name)
+          
+      testedIndices.add(tup)
+
+  l = list(testedIndices)
+  l.sort()
+  if False:
+    for release in l:
+      print('  %s' % '.'.join(str(x) for x in release))
+
+  allReleases = set(allReleases)
+
+  for x in testedIndices:
+    if x not in allReleases:
+      # Curious: we test 1.9.0 index but it's not in the releases (I think it was pulled because of nasty bug?)
+      if x != (1, 9, 0):
+        raise RuntimeError('tested version=%s but it was not released?' % '.'.join(str(y) for y in x))
+
+  notTested = []
+  for x in allReleases:
+    if x not in testedIndices:
+      if '.'.join(str(y) for y in x) in ('1.4.3', '1.9.1', '2.3.1', '2.3.2'):
+        # Exempt the dark ages indices
+        continue
+      notTested.append(x)
+
+  if len(notTested) > 0:
+    notTested.sort()
+    print('Releases that don\'t seem to be tested:')
+    failed = True
+    for x in notTested:
+      print('  %s' % '.'.join(str(y) for y in x))
+    raise RuntimeError('some releases are not tested by TestBackwardsCompatibility?')
+  else:
+    print('    success!')
+
 def main():
   c = parse_config()
   print('NOTE: output encoding is %s' % sys.stdout.encoding)
   smokeTest(c.java, c.url, c.revision, c.version, c.tmp_dir, c.is_signed, ' '.join(c.test_args))
-
+  
 def smokeTest(java, baseURL, svnRevision, version, tmpDir, isSigned, testArgs):
 
   startTime = datetime.datetime.now()

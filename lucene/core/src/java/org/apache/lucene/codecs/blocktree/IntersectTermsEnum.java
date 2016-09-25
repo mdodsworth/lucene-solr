@@ -21,7 +21,7 @@ import java.io.IOException;
 
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.TermState;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.store.IndexInput;
@@ -67,7 +67,7 @@ final class IntersectTermsEnum extends TermsEnum {
     this.fr = fr;
     runAutomaton = compiled.runAutomaton;
     compiledAutomaton = compiled;
-    in = fr.parent.in.clone();
+    in = fr.parent.termsIn.clone();
     stack = new IntersectTermsEnumFrame[5];
     for(int idx=0;idx<stack.length;idx++) {
       stack[idx] = new IntersectTermsEnumFrame(this, idx);

@@ -17,8 +17,8 @@ package org.apache.lucene.search;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReaderContext;
-import org.apache.lucene.util.DocIdBitSet;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.util.BitDocIdSet;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.Bits;
 
@@ -26,9 +26,10 @@ public class MockFilter extends Filter {
   private boolean wasCalled;
 
   @Override
-  public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) {
+  public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) {
     wasCalled = true;
-    return new FixedBitSet(context.reader().maxDoc());
+    FixedBitSet bits = new FixedBitSet(context.reader().maxDoc());
+    return new BitDocIdSet(bits);
   }
 
   public void clear() {

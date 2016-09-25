@@ -21,11 +21,12 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 
-import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.FilterLeafReader;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.BinaryDocValues;
+import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
-import org.apache.lucene.index.FilterAtomicReader;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.index.SortedSetDocValues;
@@ -48,24 +49,24 @@ public class Insanity {
    * Returns a view over {@code sane} where {@code insaneField} is a string
    * instead of a numeric.
    */
-  public static AtomicReader wrapInsanity(AtomicReader sane, String insaneField) {
+  public static LeafReader wrapInsanity(LeafReader sane, String insaneField) {
     return new UninvertingReader(new InsaneReader(sane, insaneField),
                                  Collections.singletonMap(insaneField, UninvertingReader.Type.SORTED));
   }
   
   /** Hides the proper numeric dv type for the field */
-  private static class InsaneReader extends FilterAtomicReader {
+  private static class InsaneReader extends FilterLeafReader {
     final String insaneField;
     final FieldInfos fieldInfos;
     
-    InsaneReader(AtomicReader in, String insaneField) {
+    InsaneReader(LeafReader in, String insaneField) {
       super(in);
       this.insaneField = insaneField;
       ArrayList<FieldInfo> filteredInfos = new ArrayList<>();
       for (FieldInfo fi : in.getFieldInfos()) {
         if (fi.name.equals(insaneField)) {
-          filteredInfos.add(new FieldInfo(fi.name, fi.isIndexed(), fi.number, fi.hasVectors(), fi.omitsNorms(),
-                                          fi.hasPayloads(), fi.getIndexOptions(), null, fi.getNormType(), -1, null));
+          filteredInfos.add(new FieldInfo(fi.name, fi.number, fi.hasVectors(), fi.omitsNorms(),
+                                          fi.hasPayloads(), fi.getIndexOptions(), DocValuesType.NONE, -1, null));
         } else {
           filteredInfos.add(fi);
         }

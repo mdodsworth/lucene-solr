@@ -18,12 +18,15 @@ package org.apache.lucene.store;
  */
 
 import java.io.IOException;
-
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 import java.util.HashSet;
+
+import org.apache.lucene.util.IOUtils;
 
 
 /**
@@ -36,10 +39,15 @@ import java.util.HashSet;
  * to this class, and must allow multiple threads to call
  * contains at once.</p>
  *
+ * <p>Locks with a name having the specified extensions are
+ * delegated to the primary directory; others are delegated
+ * to the secondary directory. Ideally, both Directory
+ * instances should use the same lock factory.</p>
+ *
  * @lucene.experimental
  */
 
-public class FileSwitchDirectory extends BaseDirectory {
+public class FileSwitchDirectory extends Directory {
   private final Directory secondaryDir;
   private final Directory primaryDir;
   private final Set<String> primaryExtensions;
@@ -50,7 +58,6 @@ public class FileSwitchDirectory extends BaseDirectory {
     this.primaryDir = primaryDir;
     this.secondaryDir = secondaryDir;
     this.doClose = doClose;
-    this.lockFactory = primaryDir.getLockFactory();
   }
 
   /** Return the primary directory */
@@ -64,13 +71,14 @@ public class FileSwitchDirectory extends BaseDirectory {
   }
   
   @Override
+  public Lock makeLock(String name) {
+    return getDirectory(name).makeLock(name);
+  }
+
+  @Override
   public void close() throws IOException {
     if (doClose) {
-      try {
-        secondaryDir.close();
-      } finally { 
-        primaryDir.close();
-      }
+      IOUtils.close(primaryDir, secondaryDir);
       doClose = false;
     }
   }
@@ -81,32 +89,32 @@ public class FileSwitchDirectory extends BaseDirectory {
     // LUCENE-3380: either or both of our dirs could be FSDirs,
     // but if one underlying delegate is an FSDir and mkdirs() has not
     // yet been called, because so far everything is written to the other,
-    // in this case, we don't want to throw a NoSuchDirectoryException
-    NoSuchDirectoryException exc = null;
+    // in this case, we don't want to throw a NoSuchFileException
+    NoSuchFileException exc = null;
     try {
       for(String f : primaryDir.listAll()) {
         files.add(f);
       }
-    } catch (NoSuchDirectoryException e) {
+    } catch (NoSuchFileException e) {
       exc = e;
     }
     try {
       for(String f : secondaryDir.listAll()) {
         files.add(f);
       }
-    } catch (NoSuchDirectoryException e) {
-      // we got NoSuchDirectoryException from both dirs
+    } catch (NoSuchFileException e) {
+      // we got NoSuchFileException from both dirs
       // rethrow the first.
       if (exc != null) {
         throw exc;
       }
-      // we got NoSuchDirectoryException from the secondary,
+      // we got NoSuchFileException from the secondary,
       // and the primary is empty.
       if (files.isEmpty()) {
         throw e;
       }
     }
-    // we got NoSuchDirectoryException from the primary,
+    // we got NoSuchFileException from the primary,
     // and the secondary is empty.
     if (exc != null && files.isEmpty()) {
       throw exc;
@@ -160,6 +168,17 @@ public class FileSwitchDirectory extends BaseDirectory {
 
     primaryDir.sync(primaryNames);
     secondaryDir.sync(secondaryNames);
+  }
+
+  @Override
+  public void renameFile(String source, String dest) throws IOException {
+    Directory sourceDir = getDirectory(source);
+    // won't happen with standard lucene index files since pending and commit will
+    // always have the same extension ("")
+    if (sourceDir != getDirectory(dest)) {
+      throw new AtomicMoveNotSupportedException(source, dest, "source and dest are in different directories");
+    }
+    sourceDir.renameFile(source, dest);
   }
 
   @Override

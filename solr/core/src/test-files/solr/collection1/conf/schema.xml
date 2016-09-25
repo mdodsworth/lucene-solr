@@ -83,6 +83,7 @@
       -->
     <fieldtype name="date" class="solr.TrieDateField" precisionStep="0"/>
     <fieldtype name="tdate" class="solr.TrieDateField" precisionStep="6"/>
+    <fieldtype name="tdatedv" class="solr.TrieDateField" precisionStep="6" docValues="true" multiValued="true"/>
 
     <fieldtype name="dateRange" class="solr.DateRangeField" />
 
@@ -518,6 +519,9 @@
    <field name="timestamp" type="date" indexed="true" stored="true" docValues="true" default="NOW" multiValued="false"/>
    <field name="multiDefault" type="string" indexed="true" stored="true" default="muLti-Default" multiValued="true"/>
    <field name="intDefault" type="int" indexed="true" stored="true" default="42" multiValued="false"/>
+   <field name="intRemove" type="int" indexed="true" stored="true" multiValued="true"/>
+   <field name="dateRemove" type="date" indexed="true" stored="true" multiValued="true"/>
+   <field name="floatRemove" type="float" indexed="true" stored="true" multiValued="true"/>
 
    <field name="nopositionstext" type="nopositions" indexed="true" stored="true"/>
 
@@ -570,6 +574,7 @@
    <dynamicField name="*_tds" type="tdouble" indexed="true" stored="true" multiValued="false"/>
    <dynamicField name="*_tdt" type="tdate"  indexed="true"  stored="true"/>
    <dynamicField name="*_tdt1" type="tdate"  indexed="true"  stored="true" multiValued="false"/>
+   <dynamicField name="*_tdtdv" type="tdatedv"  indexed="true"  stored="true"/>
 
    <dynamicField name="*_sI" type="string"  indexed="true"  stored="false"/>
    <dynamicField name="*_sS" type="string"  indexed="false" stored="true"/>

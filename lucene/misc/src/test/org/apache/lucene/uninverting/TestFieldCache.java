@@ -40,7 +40,7 @@ import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.document.StoredField;
-import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
@@ -64,7 +64,7 @@ import org.junit.AfterClass;
 import org.junit.BeforeClass;
 
 public class TestFieldCache extends LuceneTestCase {
-  private static AtomicReader reader;
+  private static LeafReader reader;
   private static int NUM_DOCS;
   private static int NUM_ORDS;
   private static String[] unicodeStrings;
@@ -292,7 +292,7 @@ public class TestFieldCache extends LuceneTestCase {
     IndexWriter writer= new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())).setMaxBufferedDocs(500));
     writer.close();
     IndexReader r = DirectoryReader.open(dir);
-    AtomicReader reader = SlowCompositeReaderWrapper.wrap(r);
+    LeafReader reader = SlowCompositeReaderWrapper.wrap(r);
     FieldCache.DEFAULT.getTerms(reader, "foobar", true);
     FieldCache.DEFAULT.getTermsIndex(reader, "foobar");
     FieldCache.DEFAULT.purgeByCacheKey(reader.getCoreCacheKey());
@@ -430,14 +430,12 @@ public class TestFieldCache extends LuceneTestCase {
     doc.add(new BinaryDocValuesField("binary", new BytesRef("binary value")));
     doc.add(new SortedDocValuesField("sorted", new BytesRef("sorted value")));
     doc.add(new NumericDocValuesField("numeric", 42));
-    if (defaultCodecSupportsSortedSet()) {
-      doc.add(new SortedSetDocValuesField("sortedset", new BytesRef("sortedset value1")));
-      doc.add(new SortedSetDocValuesField("sortedset", new BytesRef("sortedset value2")));
-    }
+    doc.add(new SortedSetDocValuesField("sortedset", new BytesRef("sortedset value1")));
+    doc.add(new SortedSetDocValuesField("sortedset", new BytesRef("sortedset value2")));
     iw.addDocument(doc);
     DirectoryReader ir = iw.getReader();
     iw.close();
-    AtomicReader ar = getOnlySegmentReader(ir);
+    LeafReader ar = getOnlySegmentReader(ir);
     
     // Binary type: can be retrieved via getTerms()
     try {
@@ -525,37 +523,35 @@ public class TestFieldCache extends LuceneTestCase {
     assertTrue(bits.get(0));
     
     // SortedSet type: can be retrieved via getDocTermOrds() 
-    if (defaultCodecSupportsSortedSet()) {
-      try {
-        FieldCache.DEFAULT.getNumerics(ar, "sortedset", FieldCache.NUMERIC_UTILS_INT_PARSER, false);
-        fail();
-      } catch (IllegalStateException expected) {}
+    try {
+      FieldCache.DEFAULT.getNumerics(ar, "sortedset", FieldCache.NUMERIC_UTILS_INT_PARSER, false);
+      fail();
+    } catch (IllegalStateException expected) {}
     
-      try {
-        FieldCache.DEFAULT.getTerms(ar, "sortedset", true);
-        fail();
-      } catch (IllegalStateException expected) {}
+    try {
+      FieldCache.DEFAULT.getTerms(ar, "sortedset", true);
+      fail();
+    } catch (IllegalStateException expected) {}
     
-      try {
-        FieldCache.DEFAULT.getTermsIndex(ar, "sortedset");
-        fail();
-      } catch (IllegalStateException expected) {}
-      
-      try {
-        new DocTermOrds(ar, null, "sortedset");
-        fail();
-      } catch (IllegalStateException expected) {}
+    try {
+      FieldCache.DEFAULT.getTermsIndex(ar, "sortedset");
+      fail();
+    } catch (IllegalStateException expected) {}
     
-      sortedSet = FieldCache.DEFAULT.getDocTermOrds(ar, "sortedset", null);
-      sortedSet.setDocument(0);
-      assertEquals(0, sortedSet.nextOrd());
-      assertEquals(1, sortedSet.nextOrd());
-      assertEquals(SortedSetDocValues.NO_MORE_ORDS, sortedSet.nextOrd());
-      assertEquals(2, sortedSet.getValueCount());
+    try {
+      new DocTermOrds(ar, null, "sortedset");
+      fail();
+    } catch (IllegalStateException expected) {}
     
-      bits = FieldCache.DEFAULT.getDocsWithField(ar, "sortedset");
-      assertTrue(bits.get(0));
-    }
+    sortedSet = FieldCache.DEFAULT.getDocTermOrds(ar, "sortedset", null);
+    sortedSet.setDocument(0);
+    assertEquals(0, sortedSet.nextOrd());
+    assertEquals(1, sortedSet.nextOrd());
+    assertEquals(SortedSetDocValues.NO_MORE_ORDS, sortedSet.nextOrd());
+    assertEquals(2, sortedSet.getValueCount());
+    
+    bits = FieldCache.DEFAULT.getDocsWithField(ar, "sortedset");
+    assertTrue(bits.get(0));
     
     ir.close();
     dir.close();
@@ -569,7 +565,7 @@ public class TestFieldCache extends LuceneTestCase {
     DirectoryReader ir = iw.getReader();
     iw.close();
     
-    AtomicReader ar = getOnlySegmentReader(ir);
+    LeafReader ar = getOnlySegmentReader(ir);
     
     final FieldCache cache = FieldCache.DEFAULT;
     cache.purgeAllCaches();
@@ -627,7 +623,7 @@ public class TestFieldCache extends LuceneTestCase {
     DirectoryReader ir = iw.getReader();
     iw.close();
     
-    AtomicReader ar = getOnlySegmentReader(ir);
+    LeafReader ar = getOnlySegmentReader(ir);
     
     final FieldCache cache = FieldCache.DEFAULT;
     cache.purgeAllCaches();

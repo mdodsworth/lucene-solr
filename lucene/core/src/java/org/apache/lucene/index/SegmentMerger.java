@@ -22,7 +22,6 @@ import java.util.List;
 
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.DocValuesConsumer;
-import org.apache.lucene.codecs.FieldInfosWriter;
 import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.NormsConsumer;
 import org.apache.lucene.codecs.StoredFieldsWriter;
@@ -46,24 +45,26 @@ final class SegmentMerger {
   
   private final IOContext context;
   
-  private final MergeState mergeState;
+  final MergeState mergeState;
   private final FieldInfos.Builder fieldInfosBuilder;
 
   // note, just like in codec apis Directory 'dir' is NOT the same as segmentInfo.dir!!
-  SegmentMerger(List<AtomicReader> readers, SegmentInfo segmentInfo, InfoStream infoStream, Directory dir,
-                MergeState.CheckAbort checkAbort, FieldInfos.FieldNumbers fieldNumbers, IOContext context, boolean validate) throws IOException {
+  SegmentMerger(List<LeafReader> readers, SegmentInfo segmentInfo, InfoStream infoStream, Directory dir,
+                MergeState.CheckAbort checkAbort, FieldInfos.FieldNumbers fieldNumbers, IOContext context) throws IOException {
     // validate incoming readers
-    if (validate) {
-      for (AtomicReader reader : readers) {
+    for (LeafReader reader : readers) {
+      if ((reader instanceof SegmentReader) == false) {
+        // We only validate foreign readers up front: each index component
+        // calls .checkIntegrity itself for each incoming producer
         reader.checkIntegrity();
       }
     }
+
     mergeState = new MergeState(readers, segmentInfo, infoStream, checkAbort);
     directory = dir;
     this.codec = segmentInfo.getCodec();
     this.context = context;
     this.fieldInfosBuilder = new FieldInfos.Builder(fieldNumbers);
-    mergeState.segmentInfo.setDocCount(setDocMaps());
   }
   
   /** True if any merging should happen */
@@ -86,7 +87,7 @@ final class SegmentMerger {
     // method that will spend alot of time.  The frequency
     // of this check impacts how long
     // IndexWriter.close(false) takes to actually stop the
-    // threads.
+    // background merge threads.
     mergeFieldInfos();
     long t0 = 0;
     if (mergeState.infoStream.isEnabled("SM")) {
@@ -97,10 +98,10 @@ final class SegmentMerger {
       long t1 = System.nanoTime();
       mergeState.infoStream.message("SM", ((t1-t0)/1000000) + " msec to merge stored fields [" + numMerged + " docs]");
     }
-    assert numMerged == mergeState.segmentInfo.getDocCount();
+    assert numMerged == mergeState.segmentInfo.getDocCount(): "numMerged=" + numMerged + " vs mergeState.segmentInfo.getDocCount()=" + mergeState.segmentInfo.getDocCount();
 
     final SegmentWriteState segmentWriteState = new SegmentWriteState(mergeState.infoStream, directory, mergeState.segmentInfo,
-                                                                      mergeState.fieldInfos, null, context);
+                                                                      mergeState.mergeFieldInfos, null, context);
     if (mergeState.infoStream.isEnabled("SM")) {
       t0 = System.nanoTime();
     }
@@ -113,7 +114,7 @@ final class SegmentMerger {
     if (mergeState.infoStream.isEnabled("SM")) {
       t0 = System.nanoTime();
     }
-    if (mergeState.fieldInfos.hasDocValues()) {
+    if (mergeState.mergeFieldInfos.hasDocValues()) {
       mergeDocValues(segmentWriteState);
     }
     if (mergeState.infoStream.isEnabled("SM")) {
@@ -121,7 +122,7 @@ final class SegmentMerger {
       mergeState.infoStream.message("SM", ((t1-t0)/1000000) + " msec to merge doc values [" + numMerged + " docs]");
     }
     
-    if (mergeState.fieldInfos.hasNorms()) {
+    if (mergeState.mergeFieldInfos.hasNorms()) {
       if (mergeState.infoStream.isEnabled("SM")) {
         t0 = System.nanoTime();
       }
@@ -132,7 +133,7 @@ final class SegmentMerger {
       }
     }
 
-    if (mergeState.fieldInfos.hasVectors()) {
+    if (mergeState.mergeFieldInfos.hasVectors()) {
       if (mergeState.infoStream.isEnabled("SM")) {
         t0 = System.nanoTime();
       }
@@ -145,8 +146,7 @@ final class SegmentMerger {
     }
     
     // write the merged infos
-    FieldInfosWriter fieldInfosWriter = codec.fieldInfosFormat().getFieldInfosWriter();
-    fieldInfosWriter.write(directory, mergeState.segmentInfo.name, "", mergeState.fieldInfos, context);
+    codec.fieldInfosFormat().write(directory, mergeState.segmentInfo, "", mergeState.mergeFieldInfos, context);
 
     return mergeState;
   }
@@ -182,13 +182,12 @@ final class SegmentMerger {
   }
   
   public void mergeFieldInfos() throws IOException {
-    for (AtomicReader reader : mergeState.readers) {
-      FieldInfos readerFieldInfos = reader.getFieldInfos();
+    for (FieldInfos readerFieldInfos : mergeState.fieldInfos) {
       for (FieldInfo fi : readerFieldInfos) {
         fieldInfosBuilder.add(fi);
       }
     }
-    mergeState.fieldInfos = fieldInfosBuilder.finish();
+    mergeState.mergeFieldInfos = fieldInfosBuilder.finish();
   }
 
   /**
@@ -235,32 +234,6 @@ final class SegmentMerger {
       }
     }
     return numDocs;
-  }
-
-  // NOTE: removes any "all deleted" readers from mergeState.readers
-  private int setDocMaps() throws IOException {
-    final int numReaders = mergeState.readers.size();
-
-    // Remap docIDs
-    mergeState.docMaps = new MergeState.DocMap[numReaders];
-    mergeState.docBase = new int[numReaders];
-
-    int docBase = 0;
-
-    int i = 0;
-    while(i < mergeState.readers.size()) {
-
-      final AtomicReader reader = mergeState.readers.get(i);
-
-      mergeState.docBase[i] = docBase;
-      final MergeState.DocMap docMap = MergeState.DocMap.build(reader);
-      mergeState.docMaps[i] = docMap;
-      docBase += docMap.numDocs();
-
-      i++;
-    }
-
-    return docBase;
   }
 
   private void mergeTerms(SegmentWriteState segmentWriteState) throws IOException {

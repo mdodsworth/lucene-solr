@@ -17,9 +17,18 @@ package org.apache.lucene.index;
  * limitations under the License.
  */
 
+import java.io.IOException;
+import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 
+import org.apache.lucene.codecs.DocValuesProducer;
+import org.apache.lucene.codecs.FieldsProducer;
+import org.apache.lucene.codecs.NormsProducer;
+import org.apache.lucene.codecs.StoredFieldsReader;
+import org.apache.lucene.codecs.TermVectorsReader;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.packed.PackedInts;
@@ -30,120 +39,41 @@ import org.apache.lucene.util.packed.PackedLongValues;
  * @lucene.experimental */
 public class MergeState {
 
-  /**
-   * Remaps docids around deletes during merge
-   */
-  public static abstract class DocMap {
-
-    DocMap() {}
-
-    /** Returns the mapped docID corresponding to the provided one. */
-    public abstract int get(int docID);
-
-    /** Returns the total number of documents, ignoring
-     *  deletions. */
-    public abstract int maxDoc();
-
-    /** Returns the number of not-deleted documents. */
-    public final int numDocs() {
-      return maxDoc() - numDeletedDocs();
-    }
-
-    /** Returns the number of deleted documents. */
-    public abstract int numDeletedDocs();
-
-    /** Returns true if there are any deletions. */
-    public boolean hasDeletions() {
-      return numDeletedDocs() > 0;
-    }
-
-    /** Creates a {@link DocMap} instance appropriate for
-     *  this reader. */
-    public static DocMap build(AtomicReader reader) {
-      final int maxDoc = reader.maxDoc();
-      if (!reader.hasDeletions()) {
-        return new NoDelDocMap(maxDoc);
-      }
-      final Bits liveDocs = reader.getLiveDocs();
-      return build(maxDoc, liveDocs);
-    }
-
-    static DocMap build(final int maxDoc, final Bits liveDocs) {
-      assert liveDocs != null;
-      final PackedLongValues.Builder docMapBuilder = PackedLongValues.monotonicBuilder(PackedInts.COMPACT);
-      int del = 0;
-      for (int i = 0; i < maxDoc; ++i) {
-        docMapBuilder.add(i - del);
-        if (!liveDocs.get(i)) {
-          ++del;
-        }
-      }
-      final PackedLongValues docMap = docMapBuilder.build();
-      final int numDeletedDocs = del;
-      assert docMap.size() == maxDoc;
-      return new DocMap() {
-
-        @Override
-        public int get(int docID) {
-          if (!liveDocs.get(docID)) {
-            return -1;
-          }
-          return (int) docMap.get(docID);
-        }
-
-        @Override
-        public int maxDoc() {
-          return maxDoc;
-        }
-
-        @Override
-        public int numDeletedDocs() {
-          return numDeletedDocs;
-        }
-
-      };
-    }
-
-  }
-
-  private static final class NoDelDocMap extends DocMap {
-
-    private final int maxDoc;
-
-    NoDelDocMap(int maxDoc) {
-      this.maxDoc = maxDoc;
-    }
-
-    @Override
-    public int get(int docID) {
-      return docID;
-    }
-
-    @Override
-    public int maxDoc() {
-      return maxDoc;
-    }
-
-    @Override
-    public int numDeletedDocs() {
-      return 0;
-    }
-  }
-
   /** {@link SegmentInfo} of the newly merged segment. */
   public final SegmentInfo segmentInfo;
 
   /** {@link FieldInfos} of the newly merged segment. */
-  public FieldInfos fieldInfos;
+  public FieldInfos mergeFieldInfos;
 
-  /** Readers being merged. */
-  public final List<AtomicReader> readers;
+  /** Stored field producers being merged */
+  public final StoredFieldsReader[] storedFieldsReaders;
+
+  /** Term vector producers being merged */
+  public final TermVectorsReader[] termVectorsReaders;
+
+  /** Norms producers being merged */
+  public final NormsProducer[] normsProducers;
+
+  /** DocValues producers being merged */
+  public final DocValuesProducer[] docValuesProducers;
+
+  /** FieldInfos being merged */
+  public final FieldInfos[] fieldInfos;
+
+  /** Live docs for each reader */
+  public final Bits[] liveDocs;
 
   /** Maps docIDs around deletions. */
-  public DocMap[] docMaps;
+  public final DocMap[] docMaps;
+
+  /** Postings to merge */
+  public final FieldsProducer[] fieldsProducers;
 
   /** New docID base per reader. */
-  public int[] docBase;
+  public final int[] docBase;
+
+  /** Max docs per reader */
+  public final int[] maxDocs;
 
   /** Holds the CheckAbort instance, which is invoked
    *  periodically to see if the merge has been aborted. */
@@ -157,11 +87,280 @@ public class MergeState {
   public int checkAbortCount;
 
   /** Sole constructor. */
-  MergeState(List<AtomicReader> readers, SegmentInfo segmentInfo, InfoStream infoStream, CheckAbort checkAbort) {
-    this.readers = readers;
+  MergeState(List<LeafReader> readers, SegmentInfo segmentInfo, InfoStream infoStream, CheckAbort checkAbort) throws IOException {
+
+    int numReaders = readers.size();
+    docMaps = new DocMap[numReaders];
+    docBase = new int[numReaders];
+    maxDocs = new int[numReaders];
+    fieldsProducers = new FieldsProducer[numReaders];
+    normsProducers = new NormsProducer[numReaders];
+    storedFieldsReaders = new StoredFieldsReader[numReaders];
+    termVectorsReaders = new TermVectorsReader[numReaders];
+    docValuesProducers = new DocValuesProducer[numReaders];
+    fieldInfos = new FieldInfos[numReaders];
+    liveDocs = new Bits[numReaders];
+
+    for(int i=0;i<numReaders;i++) {
+      final LeafReader reader = readers.get(i);
+
+      maxDocs[i] = reader.maxDoc();
+      liveDocs[i] = reader.getLiveDocs();
+      fieldInfos[i] = reader.getFieldInfos();
+
+      NormsProducer normsProducer;
+      DocValuesProducer docValuesProducer;
+      StoredFieldsReader storedFieldsReader;
+      TermVectorsReader termVectorsReader;
+      FieldsProducer fieldsProducer;
+      if (reader instanceof SegmentReader) {
+        SegmentReader segmentReader = (SegmentReader) reader;
+        normsProducer = segmentReader.getNormsReader();
+        if (normsProducer != null) {
+          normsProducer = normsProducer.getMergeInstance();
+        }
+        docValuesProducer = segmentReader.getDocValuesReader();
+        if (docValuesProducer != null) {
+          docValuesProducer = docValuesProducer.getMergeInstance();
+        }
+        storedFieldsReader = segmentReader.getFieldsReader();
+        if (storedFieldsReader != null) {
+          storedFieldsReader = storedFieldsReader.getMergeInstance();
+        }
+        termVectorsReader = segmentReader.getTermVectorsReader();
+        if (termVectorsReader != null) {
+          termVectorsReader = termVectorsReader.getMergeInstance();
+        }
+        fieldsProducer = segmentReader.fields();
+        if (fieldsProducer != null) {
+          fieldsProducer = fieldsProducer.getMergeInstance();
+        }
+      } else {
+        // A "foreign" reader
+        normsProducer = readerToNormsProducer(reader);
+        docValuesProducer = readerToDocValuesProducer(reader);
+        storedFieldsReader = readerToStoredFieldsReader(reader);
+        termVectorsReader = readerToTermVectorsReader(reader);
+        fieldsProducer = readerToFieldsProducer(reader);
+      }
+
+      normsProducers[i] = normsProducer;
+      docValuesProducers[i] = docValuesProducer;
+      storedFieldsReaders[i] = storedFieldsReader;
+      termVectorsReaders[i] = termVectorsReader;
+      fieldsProducers[i] = fieldsProducer;
+    }
+
     this.segmentInfo = segmentInfo;
     this.infoStream = infoStream;
     this.checkAbort = checkAbort;
+
+    setDocMaps(readers);
+  }
+
+  private NormsProducer readerToNormsProducer(final LeafReader reader) {
+    return new NormsProducer() {
+
+      @Override
+      public NumericDocValues getNorms(FieldInfo field) throws IOException {
+        return reader.getNormValues(field.name);
+      }
+
+      @Override
+      public void checkIntegrity() throws IOException {
+        // We already checkIntegrity the entire reader up front in SegmentMerger
+      }
+
+      @Override
+      public void close() {
+      }
+
+      @Override
+      public long ramBytesUsed() {
+        return 0;
+      }
+
+      @Override
+      public Iterable<? extends Accountable> getChildResources() {
+        return Collections.emptyList();
+      }
+    };
+  }
+
+  private DocValuesProducer readerToDocValuesProducer(final LeafReader reader) {
+    return new DocValuesProducer() {
+
+      @Override
+      public NumericDocValues getNumeric(FieldInfo field) throws IOException {  
+        return reader.getNumericDocValues(field.name);
+      }
+
+      @Override
+      public BinaryDocValues getBinary(FieldInfo field) throws IOException {
+        return reader.getBinaryDocValues(field.name);
+      }
+
+      @Override
+      public SortedDocValues getSorted(FieldInfo field) throws IOException {
+        return reader.getSortedDocValues(field.name);
+      }
+
+      @Override
+      public SortedNumericDocValues getSortedNumeric(FieldInfo field) throws IOException {
+        return reader.getSortedNumericDocValues(field.name);
+      }
+
+      @Override
+      public SortedSetDocValues getSortedSet(FieldInfo field) throws IOException {
+        return reader.getSortedSetDocValues(field.name);
+      }
+
+      @Override
+      public Bits getDocsWithField(FieldInfo field) throws IOException {
+        return reader.getDocsWithField(field.name);
+      }
+
+      @Override
+      public void checkIntegrity() throws IOException {
+        // We already checkIntegrity the entire reader up front in SegmentMerger
+      }
+
+      @Override
+      public void close() {
+      }
+
+      @Override
+      public long ramBytesUsed() {
+        return 0;
+      }
+
+      @Override
+      public Iterable<? extends Accountable> getChildResources() {
+        return Collections.emptyList();
+      }
+    };
+  }
+
+  private StoredFieldsReader readerToStoredFieldsReader(final LeafReader reader) {
+    return new StoredFieldsReader() {
+      @Override
+      public void visitDocument(int docID, StoredFieldVisitor visitor) throws IOException {
+        reader.document(docID, visitor);
+      }
+
+      @Override
+      public StoredFieldsReader clone() {
+        return readerToStoredFieldsReader(reader);
+      }
+
+      @Override
+      public void checkIntegrity() throws IOException {
+        // We already checkIntegrity the entire reader up front in SegmentMerger
+      }
+
+      @Override
+      public void close() {
+      }
+
+      @Override
+      public long ramBytesUsed() {
+        return 0;
+      }
+
+      @Override
+      public Iterable<? extends Accountable> getChildResources() {
+        return Collections.emptyList();
+      }
+    };
+  }
+
+  private TermVectorsReader readerToTermVectorsReader(final LeafReader reader) {
+    return new TermVectorsReader() {
+      @Override
+      public Fields get(int docID) throws IOException {
+        return reader.getTermVectors(docID);
+      }
+
+      @Override
+      public TermVectorsReader clone() {
+        return readerToTermVectorsReader(reader);
+      }
+
+      @Override
+      public void checkIntegrity() throws IOException {
+        // We already checkIntegrity the entire reader up front in SegmentMerger
+      }
+
+      @Override
+      public void close() {
+      }
+
+      @Override
+      public long ramBytesUsed() {
+        return 0;
+      }
+
+      @Override
+      public Iterable<? extends Accountable> getChildResources() {
+        return Collections.emptyList();
+      }
+    };
+  }
+
+  private FieldsProducer readerToFieldsProducer(final LeafReader reader) throws IOException {
+    final Fields fields = reader.fields();
+    return new FieldsProducer() {
+      @Override
+      public Iterator<String> iterator() {
+        return fields.iterator();
+      }
+
+      @Override
+      public Terms terms(String field) throws IOException {
+        return fields.terms(field);
+      }
+
+      @Override
+      public int size() {
+        return fields.size();
+      }
+
+      @Override
+      public void checkIntegrity() throws IOException {
+        // We already checkIntegrity the entire reader up front in SegmentMerger
+      }
+
+      @Override
+      public void close() {
+      }
+
+      @Override
+      public long ramBytesUsed() {
+        return 0;
+      }
+
+      @Override
+      public Iterable<? extends Accountable> getChildResources() {
+        return Collections.emptyList();
+      }
+    };
+  }
+
+  // NOTE: removes any "all deleted" readers from mergeState.readers
+  private void setDocMaps(List<LeafReader> readers) throws IOException {
+    final int numReaders = maxDocs.length;
+
+    // Remap docIDs
+    int docBase = 0;
+    for(int i=0;i<numReaders;i++) {
+      final LeafReader reader = readers.get(i);
+      this.docBase[i] = docBase;
+      final DocMap docMap = DocMap.build(reader);
+      docMaps[i] = docMap;
+      docBase += docMap.numDocs();
+    }
+
+    segmentInfo.setDocCount(docBase);
   }
 
   /**
@@ -202,5 +401,104 @@ public class MergeState {
         // do nothing
       }
     };
+  }
+
+
+  /**
+   * Remaps docids around deletes during merge
+   */
+  public static abstract class DocMap {
+
+    DocMap() {}
+
+    /** Returns the mapped docID corresponding to the provided one. */
+    public abstract int get(int docID);
+
+    /** Returns the total number of documents, ignoring
+     *  deletions. */
+    public abstract int maxDoc();
+
+    /** Returns the number of not-deleted documents. */
+    public final int numDocs() {
+      return maxDoc() - numDeletedDocs();
+    }
+
+    /** Returns the number of deleted documents. */
+    public abstract int numDeletedDocs();
+
+    /** Returns true if there are any deletions. */
+    public boolean hasDeletions() {
+      return numDeletedDocs() > 0;
+    }
+
+    /** Creates a {@link DocMap} instance appropriate for
+     *  this reader. */
+    public static DocMap build(LeafReader reader) {
+      final int maxDoc = reader.maxDoc();
+      if (!reader.hasDeletions()) {
+        return new NoDelDocMap(maxDoc);
+      }
+      final Bits liveDocs = reader.getLiveDocs();
+      return build(maxDoc, liveDocs);
+    }
+
+    static DocMap build(final int maxDoc, final Bits liveDocs) {
+      assert liveDocs != null;
+      final PackedLongValues.Builder docMapBuilder = PackedLongValues.monotonicBuilder(PackedInts.COMPACT);
+      int del = 0;
+      for (int i = 0; i < maxDoc; ++i) {
+        docMapBuilder.add(i - del);
+        if (!liveDocs.get(i)) {
+          ++del;
+        }
+      }
+      final PackedLongValues docMap = docMapBuilder.build();
+      final int numDeletedDocs = del;
+      assert docMap.size() == maxDoc;
+      return new DocMap() {
+
+        @Override
+        public int get(int docID) {
+          if (!liveDocs.get(docID)) {
+            return -1;
+          }
+          return (int) docMap.get(docID);
+        }
+
+        @Override
+        public int maxDoc() {
+          return maxDoc;
+        }
+
+        @Override
+        public int numDeletedDocs() {
+          return numDeletedDocs;
+        }
+      };
+    }
+  }
+
+  private static final class NoDelDocMap extends DocMap {
+
+    private final int maxDoc;
+
+    NoDelDocMap(int maxDoc) {
+      this.maxDoc = maxDoc;
+    }
+
+    @Override
+    public int get(int docID) {
+      return docID;
+    }
+
+    @Override
+    public int maxDoc() {
+      return maxDoc;
+    }
+
+    @Override
+    public int numDeletedDocs() {
+      return 0;
+    }
   }
 }

@@ -18,8 +18,10 @@ package org.apache.lucene.codecs.idversion;
  */
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.TreeMap;
 
 import org.apache.lucene.codecs.CodecUtil;
@@ -27,13 +29,12 @@ import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.PostingsReaderBase;
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.FieldInfo;
-import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.IndexFileNames;
-import org.apache.lucene.index.SegmentInfo;
+import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.Terms;
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.fst.PairOutputs.Pair;
@@ -57,45 +58,43 @@ public final class VersionBlockTreeTermsReader extends FieldsProducer {
 
   private final TreeMap<String,VersionFieldReader> fields = new TreeMap<>();
 
-  /** File offset where the directory starts in the terms file. */
-  private long dirOffset;
-
-  /** File offset where the directory starts in the index file. */
-  private long indexDirOffset;
-
-  final String segment;
-  
-  private final int version;
-
   /** Sole constructor. */
-  public VersionBlockTreeTermsReader(Directory dir, FieldInfos fieldInfos, SegmentInfo info,
-                                     PostingsReaderBase postingsReader, IOContext ioContext,
-                                     String segmentSuffix)
-    throws IOException {
+  public VersionBlockTreeTermsReader(PostingsReaderBase postingsReader, SegmentReadState state) throws IOException {
     
     this.postingsReader = postingsReader;
 
-    this.segment = info.name;
-    in = dir.openInput(IndexFileNames.segmentFileName(segment, segmentSuffix, VersionBlockTreeTermsWriter.TERMS_EXTENSION),
-                       ioContext);
+    String termsFile = IndexFileNames.segmentFileName(state.segmentInfo.name, 
+                                                      state.segmentSuffix, 
+                                                      VersionBlockTreeTermsWriter.TERMS_EXTENSION);
+    in = state.directory.openInput(termsFile, state.context);
 
     boolean success = false;
     IndexInput indexIn = null;
 
     try {
-      version = readHeader(in);
-      indexIn = dir.openInput(IndexFileNames.segmentFileName(segment, segmentSuffix, VersionBlockTreeTermsWriter.TERMS_INDEX_EXTENSION),
-                                ioContext);
-      int indexVersion = readIndexHeader(indexIn);
-      if (indexVersion != version) {
-        throw new CorruptIndexException("mixmatched version files: " + in + "=" + version + "," + indexIn + "=" + indexVersion);
+      int termsVersion = CodecUtil.checkIndexHeader(in, VersionBlockTreeTermsWriter.TERMS_CODEC_NAME,
+                                                          VersionBlockTreeTermsWriter.VERSION_START,
+                                                          VersionBlockTreeTermsWriter.VERSION_CURRENT,
+                                                          state.segmentInfo.getId(), state.segmentSuffix);
+      
+      String indexFile = IndexFileNames.segmentFileName(state.segmentInfo.name, 
+                                                        state.segmentSuffix, 
+                                                        VersionBlockTreeTermsWriter.TERMS_INDEX_EXTENSION);
+      indexIn = state.directory.openInput(indexFile, state.context);
+      int indexVersion = CodecUtil.checkIndexHeader(indexIn, VersionBlockTreeTermsWriter.TERMS_INDEX_CODEC_NAME,
+                                                               VersionBlockTreeTermsWriter.VERSION_START,
+                                                               VersionBlockTreeTermsWriter.VERSION_CURRENT,
+                                                               state.segmentInfo.getId(), state.segmentSuffix);
+      
+      if (indexVersion != termsVersion) {
+        throw new CorruptIndexException("mixmatched version files: " + in + "=" + termsVersion + "," + indexIn + "=" + indexVersion, indexIn);
       }
       
       // verify
       CodecUtil.checksumEntireFile(indexIn);
 
       // Have PostingsReader init itself
-      postingsReader.init(in);
+      postingsReader.init(in, state);
       
       // NOTE: data file is too costly to verify checksum against all the bytes on open,
       // but for now we at least verify proper structure of the checksum footer: which looks
@@ -104,12 +103,12 @@ public final class VersionBlockTreeTermsReader extends FieldsProducer {
       CodecUtil.retrieveChecksum(in);
 
       // Read per-field details
-      seekDir(in, dirOffset);
-      seekDir(indexIn, indexDirOffset);
+      seekDir(in);
+      seekDir(indexIn);
 
       final int numFields = in.readVInt();
       if (numFields < 0) {
-        throw new CorruptIndexException("invalid numFields: " + numFields + " (resource=" + in + ")");
+        throw new CorruptIndexException("invalid numFields: " + numFields, in);
       }
 
       for(int i=0;i<numFields;i++) {
@@ -122,7 +121,7 @@ public final class VersionBlockTreeTermsReader extends FieldsProducer {
         code.length = numBytes;
         final long version = in.readVLong();
         final Pair<BytesRef,Long> rootCode = VersionBlockTreeTermsWriter.FST_OUTPUTS.newPair(code, version);
-        final FieldInfo fieldInfo = fieldInfos.fieldInfo(field);
+        final FieldInfo fieldInfo = state.fieldInfos.fieldInfo(field);
         assert fieldInfo != null: "field=" + field;
         final long sumTotalTermFreq = numTerms;
         final long sumDocFreq = numTerms;
@@ -132,21 +131,21 @@ public final class VersionBlockTreeTermsReader extends FieldsProducer {
 
         BytesRef minTerm = readBytesRef(in);
         BytesRef maxTerm = readBytesRef(in);
-        if (docCount < 0 || docCount > info.getDocCount()) { // #docs with field must be <= #docs
-          throw new CorruptIndexException("invalid docCount: " + docCount + " maxDoc: " + info.getDocCount() + " (resource=" + in + ")");
+        if (docCount < 0 || docCount > state.segmentInfo.getDocCount()) { // #docs with field must be <= #docs
+          throw new CorruptIndexException("invalid docCount: " + docCount + " maxDoc: " + state.segmentInfo.getDocCount(), in);
         }
         if (sumDocFreq < docCount) {  // #postings must be >= #docs with field
-          throw new CorruptIndexException("invalid sumDocFreq: " + sumDocFreq + " docCount: " + docCount + " (resource=" + in + ")");
+          throw new CorruptIndexException("invalid sumDocFreq: " + sumDocFreq + " docCount: " + docCount, in);
         }
         if (sumTotalTermFreq != -1 && sumTotalTermFreq < sumDocFreq) { // #positions must be >= #postings
-          throw new CorruptIndexException("invalid sumTotalTermFreq: " + sumTotalTermFreq + " sumDocFreq: " + sumDocFreq + " (resource=" + in + ")");
+          throw new CorruptIndexException("invalid sumTotalTermFreq: " + sumTotalTermFreq + " sumDocFreq: " + sumDocFreq, in);
         }
         final long indexStartFP = indexIn.readVLong();
         VersionFieldReader previous = fields.put(fieldInfo.name,       
                                                  new VersionFieldReader(this, fieldInfo, numTerms, rootCode, sumTotalTermFreq, sumDocFreq, docCount,
                                                                         indexStartFP, longsSize, indexIn, minTerm, maxTerm));
         if (previous != null) {
-          throw new CorruptIndexException("duplicate field: " + fieldInfo.name + " (resource=" + in + ")");
+          throw new CorruptIndexException("duplicate field: " + fieldInfo.name, in);
         }
       }
       indexIn.close();
@@ -168,27 +167,10 @@ public final class VersionBlockTreeTermsReader extends FieldsProducer {
     return bytes;
   }
 
-  /** Reads terms file header. */
-  private int readHeader(IndexInput input) throws IOException {
-    int version = CodecUtil.checkHeader(input, VersionBlockTreeTermsWriter.TERMS_CODEC_NAME,
-                          VersionBlockTreeTermsWriter.VERSION_START,
-                          VersionBlockTreeTermsWriter.VERSION_CURRENT);
-    return version;
-  }
-
-  /** Reads index file header. */
-  private int readIndexHeader(IndexInput input) throws IOException {
-    int version = CodecUtil.checkHeader(input, VersionBlockTreeTermsWriter.TERMS_INDEX_CODEC_NAME,
-                          VersionBlockTreeTermsWriter.VERSION_START,
-                          VersionBlockTreeTermsWriter.VERSION_CURRENT);
-    return version;
-  }
-
   /** Seek {@code input} to the directory offset. */
-  private void seekDir(IndexInput input, long dirOffset)
-      throws IOException {
+  private void seekDir(IndexInput input) throws IOException {
     input.seek(input.length() - CodecUtil.footerLength() - 8);
-    dirOffset = input.readLong();
+    long dirOffset = input.readLong();
     input.seek(dirOffset);
   }
 
@@ -242,11 +224,19 @@ public final class VersionBlockTreeTermsReader extends FieldsProducer {
 
   @Override
   public long ramBytesUsed() {
-    long sizeInByes = ((postingsReader!=null) ? postingsReader.ramBytesUsed() : 0);
+    long sizeInBytes = postingsReader.ramBytesUsed();
     for(VersionFieldReader reader : fields.values()) {
-      sizeInByes += reader.ramBytesUsed();
+      sizeInBytes += reader.ramBytesUsed();
     }
-    return sizeInByes;
+    return sizeInBytes;
+  }
+  
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    List<Accountable> resources = new ArrayList<>();
+    resources.addAll(Accountables.namedAccountables("field", fields));
+    resources.add(Accountables.namedAccountable("delegate", postingsReader));
+    return Collections.unmodifiableList(resources);
   }
 
   @Override
@@ -256,5 +246,10 @@ public final class VersionBlockTreeTermsReader extends FieldsProducer {
       
     // postings
     postingsReader.checkIntegrity();
+  }
+  
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(fields=" + fields.size() + ",delegate=" + postingsReader.toString() + ")";
   }
 }

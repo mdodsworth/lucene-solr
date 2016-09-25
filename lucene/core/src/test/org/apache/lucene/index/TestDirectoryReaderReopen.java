@@ -16,6 +16,7 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -28,7 +29,6 @@ import java.util.Random;
 import java.util.Set;
 
 import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
@@ -39,11 +39,13 @@ import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.MockDirectoryWrapper.FakeIOException;
 import org.apache.lucene.store.MockDirectoryWrapper;
+import org.apache.lucene.store.MockDirectoryWrapper.FakeIOException;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
+
+
 
 public class TestDirectoryReaderReopen extends LuceneTestCase {
   
@@ -432,7 +434,6 @@ public class TestDirectoryReaderReopen extends LuceneTestCase {
   }
   
   public static void createIndex(Random random, Directory dir, boolean multiSegment) throws IOException {
-    IndexWriter.unlock(dir);
     IndexWriter w = new IndexWriter(dir, LuceneTestCase.newIndexWriterConfig(random, new MockAnalyzer(random))
         .setMergePolicy(new LogDocMergePolicy()));
     
@@ -630,7 +631,7 @@ public class TestDirectoryReaderReopen extends LuceneTestCase {
     }
 
     IndexWriterConfig iwc = new IndexWriterConfig(new MockAnalyzer(random()));
-    iwc.setCodec(Codec.forName("Lucene410"));
+    iwc.setCodec(TestUtil.getDefaultCodec());
     IndexWriter w = new IndexWriter(dir, iwc);
     Document doc = new Document();
     doc.add(newStringField("id", "id", Field.Store.NO));
@@ -652,13 +653,11 @@ public class TestDirectoryReaderReopen extends LuceneTestCase {
     // Fail when reopen tries to open the live docs file:
     dir.failOn(new MockDirectoryWrapper.Failure() {
 
-      int failCount;
+      boolean failed;
 
       @Override
       public void eval(MockDirectoryWrapper dir) throws IOException {
-        // Need to throw exc three times so the logic in
-        // SegmentInfos.FindSegmentsFile "really believes" us:
-        if (failCount >= 3) {
+        if (failed) {
           return;
         }
         //System.out.println("failOn: ");
@@ -670,7 +669,7 @@ public class TestDirectoryReaderReopen extends LuceneTestCase {
               System.out.println("TEST: now fail; exc:");
               new Throwable().printStackTrace(System.out);
             }
-            failCount++;
+            failed = true;
             throw new FakeIOException();
           }
         }

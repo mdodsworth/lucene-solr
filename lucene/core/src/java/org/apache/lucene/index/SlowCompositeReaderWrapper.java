@@ -23,17 +23,14 @@ import java.util.Map;
 
 import org.apache.lucene.util.Bits;
 
-import org.apache.lucene.index.DirectoryReader; // javadoc
-import org.apache.lucene.index.FieldInfo.DocValuesType;
 import org.apache.lucene.index.MultiDocValues.MultiSortedDocValues;
 import org.apache.lucene.index.MultiDocValues.MultiSortedSetDocValues;
 import org.apache.lucene.index.MultiDocValues.OrdinalMap;
-import org.apache.lucene.index.MultiReader; // javadoc
 
 /**
  * This class forces a composite reader (eg a {@link
- * MultiReader} or {@link DirectoryReader}) to emulate an
- * atomic reader.  This requires implementing the postings
+ * MultiReader} or {@link DirectoryReader}) to emulate a
+ * {@link LeafReader}.  This requires implementing the postings
  * APIs on-the-fly, using the static methods in {@link
  * MultiFields}, {@link MultiDocValues}, by stepping through
  * the sub-readers to merge fields/terms, appending docs, etc.
@@ -42,25 +39,25 @@ import org.apache.lucene.index.MultiReader; // javadoc
  * performance hit.  If this is important to your use case,
  * you'll get better performance by gathering the sub readers using
  * {@link IndexReader#getContext()} to get the
- * atomic leaves and then operate per-AtomicReader,
+ * leaves and then operate per-LeafReader,
  * instead of using this class.
  */
-public final class SlowCompositeReaderWrapper extends AtomicReader {
+public final class SlowCompositeReaderWrapper extends LeafReader {
 
   private final CompositeReader in;
   private final Fields fields;
   private final Bits liveDocs;
   
-  /** This method is sugar for getting an {@link AtomicReader} from
+  /** This method is sugar for getting an {@link LeafReader} from
    * an {@link IndexReader} of any kind. If the reader is already atomic,
    * it is returned unchanged, otherwise wrapped by this class.
    */
-  public static AtomicReader wrap(IndexReader reader) throws IOException {
+  public static LeafReader wrap(IndexReader reader) throws IOException {
     if (reader instanceof CompositeReader) {
       return new SlowCompositeReaderWrapper((CompositeReader) reader);
     } else {
-      assert reader instanceof AtomicReader;
-      return (AtomicReader) reader;
+      assert reader instanceof LeafReader;
+      return (LeafReader) reader;
     }
   }
 
@@ -143,7 +140,7 @@ public final class SlowCompositeReaderWrapper extends AtomicReader {
     final SortedDocValues[] values = new SortedDocValues[size];
     final int[] starts = new int[size+1];
     for (int i = 0; i < size; i++) {
-      AtomicReaderContext context = in.leaves().get(i);
+      LeafReaderContext context = in.leaves().get(i);
       SortedDocValues v = context.reader().getSortedDocValues(field);
       if (v == null) {
         v = DocValues.emptySorted();
@@ -182,7 +179,7 @@ public final class SlowCompositeReaderWrapper extends AtomicReader {
     final SortedSetDocValues[] values = new SortedSetDocValues[size];
     final int[] starts = new int[size+1];
     for (int i = 0; i < size; i++) {
-      AtomicReaderContext context = in.leaves().get(i);
+      LeafReaderContext context = in.leaves().get(i);
       SortedSetDocValues v = context.reader().getSortedSetDocValues(field);
       if (v == null) {
         v = DocValues.emptySortedSet();
@@ -259,7 +256,7 @@ public final class SlowCompositeReaderWrapper extends AtomicReader {
   @Override
   public void checkIntegrity() throws IOException {
     ensureOpen();
-    for (AtomicReaderContext ctx : in.leaves()) {
+    for (LeafReaderContext ctx : in.leaves()) {
       ctx.reader().checkIntegrity();
     }
   }

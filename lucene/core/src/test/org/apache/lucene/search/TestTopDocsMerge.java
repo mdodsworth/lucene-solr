@@ -19,9 +19,12 @@ package org.apache.lucene.search;
 
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.FloatDocValuesField;
 import org.apache.lucene.document.FloatField;
 import org.apache.lucene.document.IntField;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.document.NumericDocValuesField;
+import org.apache.lucene.document.SortedDocValuesField;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.CompositeReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexReaderContext;
@@ -29,6 +32,7 @@ import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.ReaderUtil;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
 
@@ -40,9 +44,9 @@ import java.util.List;
 public class TestTopDocsMerge extends LuceneTestCase {
 
   private static class ShardSearcher extends IndexSearcher {
-    private final List<AtomicReaderContext> ctx;
+    private final List<LeafReaderContext> ctx;
 
-    public ShardSearcher(AtomicReaderContext ctx, IndexReaderContext parent) {
+    public ShardSearcher(LeafReaderContext ctx, IndexReaderContext parent) {
       super(parent);
       this.ctx = Collections.singletonList(ctx);
     }
@@ -103,9 +107,9 @@ public class TestTopDocsMerge extends LuceneTestCase {
 
       for(int docIDX=0;docIDX<numDocs;docIDX++) {
         final Document doc = new Document();
-        doc.add(newStringField("string", TestUtil.randomRealisticUnicodeString(random()), Field.Store.NO));
+        doc.add(new SortedDocValuesField("string", new BytesRef(TestUtil.randomRealisticUnicodeString(random()))));
         doc.add(newTextField("text", content[random().nextInt(content.length)], Field.Store.NO));
-        doc.add(new FloatField("float", random().nextFloat(), Field.Store.NO));
+        doc.add(new FloatDocValuesField("float", random().nextFloat()));
         final int intValue;
         if (random().nextInt(100) == 17) {
           intValue = Integer.MIN_VALUE;
@@ -114,7 +118,7 @@ public class TestTopDocsMerge extends LuceneTestCase {
         } else {
           intValue = random().nextInt();
         }
-        doc.add(new IntField("int", intValue, Field.Store.NO));
+        doc.add(new NumericDocValuesField("int", intValue));
         if (VERBOSE) {
           System.out.println("  doc=" + doc);
         }
@@ -133,10 +137,10 @@ public class TestTopDocsMerge extends LuceneTestCase {
     final ShardSearcher[] subSearchers;
     final int[] docStarts;
 
-    if (ctx instanceof AtomicReaderContext) {
+    if (ctx instanceof LeafReaderContext) {
       subSearchers = new ShardSearcher[1];
       docStarts = new int[1];
-      subSearchers[0] = new ShardSearcher((AtomicReaderContext) ctx, ctx);
+      subSearchers[0] = new ShardSearcher((LeafReaderContext) ctx, ctx);
       docStarts[0] = 0;
     } else {
       final CompositeReaderContext compCTX = (CompositeReaderContext) ctx;
@@ -145,7 +149,7 @@ public class TestTopDocsMerge extends LuceneTestCase {
       docStarts = new int[size];
       int docBase = 0;
       for(int searcherIDX=0;searcherIDX<subSearchers.length;searcherIDX++) {
-        final AtomicReaderContext leave = compCTX.leaves().get(searcherIDX);
+        final LeafReaderContext leave = compCTX.leaves().get(searcherIDX);
         subSearchers[searcherIDX] = new ShardSearcher(leave, compCTX);
         docStarts[searcherIDX] = docBase;
         docBase += leave.reader().maxDoc();

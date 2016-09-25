@@ -21,15 +21,14 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.FilterCodec;
 import org.apache.lucene.codecs.PostingsFormat;
-import org.apache.lucene.codecs.lucene410.Lucene410Codec;
-import org.apache.lucene.codecs.pulsing.Pulsing41PostingsFormat;
+import org.apache.lucene.codecs.asserting.AssertingCodec;
+import org.apache.lucene.codecs.memory.MemoryPostingsFormat;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
@@ -1070,9 +1069,9 @@ public class TestAddIndexes extends LuceneTestCase {
     aux2.close();
   }
 
-  private static final class CustomPerFieldCodec extends Lucene410Codec {
+  private static final class CustomPerFieldCodec extends AssertingCodec {
     private final PostingsFormat simpleTextFormat = PostingsFormat.forName("SimpleText");
-    private final PostingsFormat defaultFormat = PostingsFormat.forName("Lucene41");
+    private final PostingsFormat defaultFormat = TestUtil.getDefaultPostingsFormat();
     private final PostingsFormat memoryFormat = PostingsFormat.forName("Memory");
 
     @Override
@@ -1115,14 +1114,16 @@ public class TestAddIndexes extends LuceneTestCase {
     w3.addIndexes(readers);
     w3.close();
     // we should now see segments_X,
-    // segments.gen,_Y.cfs,_Y.cfe, _Z.si
-    assertEquals("Only one compound segment should exist, but got: " + Arrays.toString(dir.listAll()), 5, dir.listAll().length);
+    // _Y.cfs,_Y.cfe, _Z.si
+    SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
+    assertEquals("Only one compound segment should exist", 1, sis.size());
+    assertTrue(sis.info(0).info.getUseCompoundFile());
     dir.close();
   }
   
   private static final class UnRegisteredCodec extends FilterCodec {
     public UnRegisteredCodec() {
-      super("NotRegistered", new Lucene410Codec());
+      super("NotRegistered", TestUtil.getDefaultCodec());
     }
   }
   
@@ -1140,7 +1141,7 @@ public class TestAddIndexes extends LuceneTestCase {
       IndexWriter w = new IndexWriter(toAdd, conf);
       Document doc = new Document();
       FieldType customType = new FieldType();
-      customType.setIndexed(true); 
+      customType.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS); 
       doc.add(newField("foo", "bar", customType));
       w.addDocument(doc);
       w.close();
@@ -1149,7 +1150,7 @@ public class TestAddIndexes extends LuceneTestCase {
     {
       Directory dir = newDirectory();
       IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
-      conf.setCodec(TestUtil.alwaysPostingsFormat(new Pulsing41PostingsFormat(1 + random().nextInt(20))));
+      conf.setCodec(TestUtil.alwaysPostingsFormat(new MemoryPostingsFormat()));
       IndexWriter w = new IndexWriter(dir, conf);
       try {
         w.addIndexes(toAdd);
@@ -1223,7 +1224,7 @@ public class TestAddIndexes extends LuceneTestCase {
     w.addIndexes(empty);
     w.close();
     DirectoryReader dr = DirectoryReader.open(d1);
-    for (AtomicReaderContext ctx : dr.leaves()) {
+    for (LeafReaderContext ctx : dr.leaves()) {
       assertTrue("empty segments should be dropped by addIndexes", ctx.reader().maxDoc() > 0);
     }
     dr.close();
@@ -1245,7 +1246,7 @@ public class TestAddIndexes extends LuceneTestCase {
     w.addIndexes(allDeletedReader);
     w.close();
     DirectoryReader dr = DirectoryReader.open(src);
-    for (AtomicReaderContext ctx : dr.leaves()) {
+    for (LeafReaderContext ctx : dr.leaves()) {
       assertTrue("empty segments should be dropped by addIndexes", ctx.reader().maxDoc() > 0);
     }
     dr.close();

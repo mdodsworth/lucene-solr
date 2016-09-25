@@ -25,20 +25,22 @@ import java.util.Random;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
-import org.apache.lucene.index.AtomicReader;
 import org.apache.lucene.index.DocsAndPositionsEnum;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.Fields;
+import org.apache.lucene.index.IndexOptions;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.TestUtil;
-import org.apache.lucene.util.automaton.AutomatonTestUtil;
 import org.apache.lucene.util.automaton.Automata;
-import org.apache.lucene.util.automaton.Operations;
+import org.apache.lucene.util.automaton.AutomatonTestUtil;
 import org.apache.lucene.util.automaton.CharacterRunAutomaton;
+import org.apache.lucene.util.automaton.Operations;
 import org.apache.lucene.util.automaton.RegExp;
+
+import static org.apache.lucene.util.automaton.Operations.DEFAULT_MAX_DETERMINIZED_STATES;
 
 public class TestMockAnalyzer extends BaseTokenStreamTestCase {
 
@@ -166,7 +168,8 @@ public class TestMockAnalyzer extends BaseTokenStreamTestCase {
       new CharacterRunAutomaton(
           Operations.complement(
               Operations.union(
-                  Arrays.asList(Automata.makeString("foo"), Automata.makeString("bar")))));
+                  Arrays.asList(Automata.makeString("foo"), Automata.makeString("bar"))),
+              DEFAULT_MAX_DETERMINIZED_STATES));
     Analyzer a = new MockAnalyzer(random(), MockTokenizer.SIMPLE, true, keepWords);
     assertAnalyzesTo(a, "quick foo brown bar bar fox foo",
         new String[] { "foo", "bar", "bar", "foo" },
@@ -229,7 +232,7 @@ public class TestMockAnalyzer extends BaseTokenStreamTestCase {
   public void testRandomRegexps() throws Exception {
     int iters = atLeast(30);
     for (int i = 0; i < iters; i++) {
-      final CharacterRunAutomaton dfa = new CharacterRunAutomaton(AutomatonTestUtil.randomAutomaton(random()));
+      final CharacterRunAutomaton dfa = new CharacterRunAutomaton(AutomatonTestUtil.randomAutomaton(random()), Integer.MAX_VALUE);
       final boolean lowercase = random().nextBoolean();
       final int limit = TestUtil.nextInt(random(), 0, 500);
       Analyzer a = new Analyzer() {
@@ -305,8 +308,7 @@ public class TestMockAnalyzer extends BaseTokenStreamTestCase {
     final RandomIndexWriter writer = new RandomIndexWriter(random(), newDirectory());
     final Document doc = new Document();
     final FieldType ft = new FieldType();
-    ft.setIndexed(true);
-    ft.setIndexOptions(IndexOptions.DOCS_ONLY);
+    ft.setIndexOptions(IndexOptions.DOCS);
     ft.setTokenized(true);
     ft.setStoreTermVectors(true);
     ft.setStoreTermVectorPositions(true);
@@ -314,7 +316,7 @@ public class TestMockAnalyzer extends BaseTokenStreamTestCase {
     doc.add(new Field("f", "a", ft));
     doc.add(new Field("f", "a", ft));
     writer.addDocument(doc, a);
-    final AtomicReader reader = getOnlySegmentReader(writer.getReader());
+    final LeafReader reader = getOnlySegmentReader(writer.getReader());
     final Fields fields = reader.getTermVectors(0);
     final Terms terms = fields.terms("f");
     final TermsEnum te = terms.iterator(null);

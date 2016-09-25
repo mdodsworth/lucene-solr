@@ -19,7 +19,7 @@ package org.apache.lucene;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.codecs.PostingsFormat;
-import org.apache.lucene.codecs.lucene410.Lucene410Codec;
+import org.apache.lucene.codecs.asserting.AssertingCodec;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.index.DirectoryReader;
@@ -30,6 +30,7 @@ import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.store.BaseDirectoryWrapper;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.TestUtil;
 
 
 /* Intentionally outside of oal.index to verify fully
@@ -37,16 +38,16 @@ import org.apache.lucene.util.LuceneTestCase;
 
 public class TestExternalCodecs extends LuceneTestCase {
 
-  private static final class CustomPerFieldCodec extends Lucene410Codec {
+  private static final class CustomPerFieldCodec extends AssertingCodec {
     
     private final PostingsFormat ramFormat = PostingsFormat.forName("RAMOnly");
-    private final PostingsFormat defaultFormat = PostingsFormat.forName("Lucene41");
-    private final PostingsFormat pulsingFormat = PostingsFormat.forName("Pulsing41");
+    private final PostingsFormat defaultFormat = TestUtil.getDefaultPostingsFormat();
+    private final PostingsFormat memoryFormat = PostingsFormat.forName("Memory");
 
     @Override
     public PostingsFormat getPostingsFormatForField(String field) {
       if (field.equals("field2") || field.equals("id")) {
-        return pulsingFormat;
+        return memoryFormat;
       } else if (field.equals("field1")) {
         return defaultFormat;
       } else {
@@ -76,8 +77,8 @@ public class TestExternalCodecs extends LuceneTestCase {
     Document doc = new Document();
     // uses default codec:
     doc.add(newTextField("field1", "this field uses the standard codec as the test", Field.Store.NO));
-    // uses pulsing codec:
-    Field field2 = newTextField("field2", "this field uses the pulsing codec as the test", Field.Store.NO);
+    // uses memory codec:
+    Field field2 = newTextField("field2", "this field uses the memory codec as the test", Field.Store.NO);
     doc.add(field2);
     
     Field idField = newStringField("id", "", Field.Store.NO);
@@ -100,7 +101,7 @@ public class TestExternalCodecs extends LuceneTestCase {
     assertEquals(NUM_DOCS-1, r.numDocs());
     IndexSearcher s = newSearcher(r);
     assertEquals(NUM_DOCS-1, s.search(new TermQuery(new Term("field1", "standard")), 1).totalHits);
-    assertEquals(NUM_DOCS-1, s.search(new TermQuery(new Term("field2", "pulsing")), 1).totalHits);
+    assertEquals(NUM_DOCS-1, s.search(new TermQuery(new Term("field2", "memory")), 1).totalHits);
     r.close();
 
     if (VERBOSE) {
@@ -120,7 +121,7 @@ public class TestExternalCodecs extends LuceneTestCase {
     assertEquals(NUM_DOCS-2, r.numDocs());
     s = newSearcher(r);
     assertEquals(NUM_DOCS-2, s.search(new TermQuery(new Term("field1", "standard")), 1).totalHits);
-    assertEquals(NUM_DOCS-2, s.search(new TermQuery(new Term("field2", "pulsing")), 1).totalHits);
+    assertEquals(NUM_DOCS-2, s.search(new TermQuery(new Term("field2", "memory")), 1).totalHits);
     assertEquals(1, s.search(new TermQuery(new Term("id", "76")), 1).totalHits);
     assertEquals(0, s.search(new TermQuery(new Term("id", "77")), 1).totalHits);
     assertEquals(0, s.search(new TermQuery(new Term("id", "44")), 1).totalHits);

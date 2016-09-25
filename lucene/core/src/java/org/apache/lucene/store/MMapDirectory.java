@@ -18,13 +18,12 @@ package org.apache.lucene.store;
  */
  
 import java.io.IOException;
-import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException; // javadoc @link
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileChannel.MapMode;
+import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-
 import java.security.AccessController;
 import java.security.PrivilegedExceptionAction;
 import java.security.PrivilegedActionException;
@@ -44,7 +43,7 @@ import org.apache.lucene.util.Constants;
  * be sure your have plenty of virtual address space, e.g. by
  * using a 64 bit JRE, or a 32 bit JRE with indexes that are
  * guaranteed to fit within the address space.
- * On 32 bit platforms also consult {@link #MMapDirectory(File, LockFactory, int)}
+ * On 32 bit platforms also consult {@link #MMapDirectory(Path, LockFactory, int)}
  * if you have problems with mmap failing because of fragmented
  * address space. If you get an OutOfMemoryException, it is recommended
  * to reduce the chunk size, until it works.
@@ -83,29 +82,39 @@ public class MMapDirectory extends FSDirectory {
   private boolean useUnmapHack = UNMAP_SUPPORTED;
   /** 
    * Default max chunk size.
-   * @see #MMapDirectory(File, LockFactory, int)
+   * @see #MMapDirectory(Path, LockFactory, int)
    */
-  public static final int DEFAULT_MAX_BUFF = Constants.JRE_IS_64BIT ? (1 << 30) : (1 << 28);
+  public static final int DEFAULT_MAX_CHUNK_SIZE = Constants.JRE_IS_64BIT ? (1 << 30) : (1 << 28);
   final int chunkSizePower;
 
   /** Create a new MMapDirectory for the named location.
    *
    * @param path the path of the directory
-   * @param lockFactory the lock factory to use, or null for the default
-   * ({@link NativeFSLockFactory});
+   * @param lockFactory the lock factory to use
    * @throws IOException if there is a low-level I/O error
    */
-  public MMapDirectory(File path, LockFactory lockFactory) throws IOException {
-    this(path, lockFactory, DEFAULT_MAX_BUFF);
+  public MMapDirectory(Path path, LockFactory lockFactory) throws IOException {
+    this(path, lockFactory, DEFAULT_MAX_CHUNK_SIZE);
   }
 
-  /** Create a new MMapDirectory for the named location and {@link NativeFSLockFactory}.
-   *
-   * @param path the path of the directory
-   * @throws IOException if there is a low-level I/O error
-   */
-  public MMapDirectory(File path) throws IOException {
-    this(path, null);
+  /** Create a new MMapDirectory for the named location and {@link FSLockFactory#getDefault()}.
+  *
+  * @param path the path of the directory
+  * @throws IOException if there is a low-level I/O error
+  */
+  public MMapDirectory(Path path) throws IOException {
+    this(path, FSLockFactory.getDefault());
+  }
+  
+  /** Create a new MMapDirectory for the named location and {@link FSLockFactory#getDefault()}.
+  *
+  * @param path the path of the directory
+  * @param maxChunkSize maximum chunk size (default is 1 GiBytes for
+  * 64 bit JVMs and 256 MiBytes for 32 bit JVMs) used for memory mapping.
+  * @throws IOException if there is a low-level I/O error
+  */
+  public MMapDirectory(Path path, int maxChunkSize) throws IOException {
+    this(path, FSLockFactory.getDefault(), maxChunkSize);
   }
   
   /**
@@ -128,7 +137,7 @@ public class MMapDirectory extends FSDirectory {
    * <b>Please note:</b> The chunk size is always rounded down to a power of 2.
    * @throws IOException if there is a low-level I/O error
    */
-  public MMapDirectory(File path, LockFactory lockFactory, int maxChunkSize) throws IOException {
+  public MMapDirectory(Path path, LockFactory lockFactory, int maxChunkSize) throws IOException {
     super(path, lockFactory);
     if (maxChunkSize <= 0) {
       throw new IllegalArgumentException("Maximum chunk size for mmap must be >0");
@@ -182,7 +191,7 @@ public class MMapDirectory extends FSDirectory {
   
   /**
    * Returns the current mmap chunk size.
-   * @see #MMapDirectory(File, LockFactory, int)
+   * @see #MMapDirectory(Path, LockFactory, int)
    */
   public final int getMaxChunkSize() {
     return 1 << chunkSizePower;
@@ -192,9 +201,9 @@ public class MMapDirectory extends FSDirectory {
   @Override
   public IndexInput openInput(String name, IOContext context) throws IOException {
     ensureOpen();
-    File file = new File(getDirectory(), name);
-    try (FileChannel c = FileChannel.open(file.toPath(), StandardOpenOption.READ)) {
-      final String resourceDescription = "MMapIndexInput(path=\"" + file.toString() + "\")";
+    Path path = directory.resolve(name);
+    try (FileChannel c = FileChannel.open(path, StandardOpenOption.READ)) {
+      final String resourceDescription = "MMapIndexInput(path=\"" + path.toString() + "\")";
       final boolean useUnmap = getUseUnmap();
       return ByteBufferIndexInput.newInstance(resourceDescription,
           map(resourceDescription, c, 0, c.size()), 

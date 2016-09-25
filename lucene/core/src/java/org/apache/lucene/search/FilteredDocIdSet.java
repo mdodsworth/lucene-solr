@@ -19,6 +19,7 @@ package org.apache.lucene.search;
 
 import java.io.IOException;
 
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.RamUsageEstimator;
 
@@ -51,7 +52,12 @@ public abstract class FilteredDocIdSet extends DocIdSet {
   public FilteredDocIdSet(DocIdSet innerSet) {
     _innerSet = innerSet;
   }
-  
+
+  /** Return the wrapped {@link DocIdSet}. */
+  public DocIdSet getDelegate() {
+    return _innerSet;
+  }
+
   /** This DocIdSet implementation is cacheable if the inner set is cacheable. */
   @Override
   public boolean isCacheable() {
@@ -61,6 +67,11 @@ public abstract class FilteredDocIdSet extends DocIdSet {
   @Override
   public long ramBytesUsed() {
     return RamUsageEstimator.NUM_BYTES_OBJECT_REF + _innerSet.ramBytesUsed();
+  }
+  
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return _innerSet.getChildResources();
   }
 
   @Override

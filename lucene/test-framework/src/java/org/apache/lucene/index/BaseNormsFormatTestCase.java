@@ -18,8 +18,11 @@ package org.apache.lucene.index;
  */
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Random;
 
+import com.carrotsearch.randomizedtesting.annotations.Seed;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.MockTokenizer;
@@ -41,6 +44,7 @@ import org.apache.lucene.util.TestUtil;
  * test passes, then all Lucene/Solr tests should also pass.  Ie,
  * if there is some bug in a given NormsFormat that this
  * test fails to catch then this test needs to be improved! */
+@Seed(value = "AD2222476BCB8800")
 public abstract class BaseNormsFormatTestCase extends BaseIndexFileFormatTestCase {
   
   public void testByteRange() throws Exception {
@@ -128,7 +132,6 @@ public abstract class BaseNormsFormatTestCase extends BaseIndexFileFormatTestCas
   
   public void testAllZeros() throws Exception {
     int iterations = atLeast(1);
-    final Random r = random();
     for (int i = 0; i < iterations; i++) {
       doTestNormsVersusStoredFields(new LongProducer() {
         @Override
@@ -136,6 +139,74 @@ public abstract class BaseNormsFormatTestCase extends BaseIndexFileFormatTestCas
           return 0;
         }
       });
+    }
+  }
+  
+  public void testSparse() throws Exception {
+    int iterations = atLeast(1);
+    final Random r = random();
+    for (int i = 0; i < iterations; i++) {
+      doTestNormsVersusStoredFields(new LongProducer() {
+        @Override
+        long next() {
+          return r.nextInt(100) == 0 ? TestUtil.nextLong(r, Byte.MIN_VALUE, Byte.MAX_VALUE) : 0;
+        }
+      });
+    }
+  }
+  
+  public void testOutliers() throws Exception {
+    int iterations = atLeast(1);
+    final Random r = random();
+    for (int i = 0; i < iterations; i++) {
+      final long commonValue = TestUtil.nextLong(r, Byte.MIN_VALUE, Byte.MAX_VALUE);
+      doTestNormsVersusStoredFields(new LongProducer() {
+        @Override
+        long next() {
+          return r.nextInt(100) == 0 ? TestUtil.nextLong(r, Byte.MIN_VALUE, Byte.MAX_VALUE) : commonValue;
+        }
+      });
+    }
+  }
+  
+  public void testOutliers2() throws Exception {
+    int iterations = atLeast(1);
+    final Random r = random();
+    for (int i = 0; i < iterations; i++) {
+      final long commonValue = TestUtil.nextLong(r, Byte.MIN_VALUE, Byte.MAX_VALUE);
+      final long uncommonValue = TestUtil.nextLong(r, Byte.MIN_VALUE, Byte.MAX_VALUE);
+      doTestNormsVersusStoredFields(new LongProducer() {
+        @Override
+        long next() {
+          return r.nextInt(100) == 0 ? uncommonValue : commonValue;
+        }
+      });
+    }
+  }
+  
+  public void testNCommon() throws Exception {
+    final int iterations = atLeast(1);
+    final Random r = random();
+    for (int i = 0; i < iterations; ++i) {
+      // 16 is 4 bpv, the max before we jump to 8bpv
+      for (int n = 2; n < 16; ++n) {
+        final int N = n;
+        final long[] commonValues = new long[N];
+        for (int j = 0; j < N; ++j) {
+          commonValues[j] = TestUtil.nextLong(r, Byte.MIN_VALUE, Byte.MAX_VALUE);
+        }
+        final int numOtherValues = TestUtil.nextInt(r, 2, 256 - N);
+        final long[] otherValues = new long[numOtherValues];
+        for (int j = 0; j < numOtherValues; ++j) {
+          otherValues[j] = TestUtil.nextLong(r, Byte.MIN_VALUE, Byte.MAX_VALUE);
+        }
+        doTestNormsVersusStoredFields(new LongProducer() {
+          @Override
+          long next() {
+            return r.nextInt(100) == 0 ? otherValues[r.nextInt(numOtherValues - 1)] : commonValues[r.nextInt(N - 1)];
+          }
+        });
+      }
     }
   }
   
@@ -178,12 +249,12 @@ public abstract class BaseNormsFormatTestCase extends BaseIndexFileFormatTestCas
     
     // compare
     DirectoryReader ir = DirectoryReader.open(dir);
-    for (AtomicReaderContext context : ir.leaves()) {
-      AtomicReader r = context.reader();
+    for (LeafReaderContext context : ir.leaves()) {
+      LeafReader r = context.reader();
       NumericDocValues docValues = r.getNormValues("stored");
       for (int i = 0; i < r.maxDoc(); i++) {
         long storedValue = Long.parseLong(r.document(i).get("stored"));
-        assertEquals(storedValue, docValues.get(i));
+        assertEquals("doc " + i, storedValue, docValues.get(i));
       }
     }
     ir.close();
@@ -192,8 +263,8 @@ public abstract class BaseNormsFormatTestCase extends BaseIndexFileFormatTestCas
     
     // compare again
     ir = DirectoryReader.open(dir);
-    for (AtomicReaderContext context : ir.leaves()) {
-      AtomicReader r = context.reader();
+    for (LeafReaderContext context : ir.leaves()) {
+      LeafReader r = context.reader();
       NumericDocValues docValues = r.getNormValues("stored");
       for (int i = 0; i < r.maxDoc(); i++) {
         long storedValue = Long.parseLong(r.document(i).get("stored"));
@@ -230,7 +301,7 @@ public abstract class BaseNormsFormatTestCase extends BaseIndexFileFormatTestCas
     }
 
     @Override
-    public SimScorer simScorer(SimWeight weight, AtomicReaderContext context) throws IOException {
+    public SimScorer simScorer(SimWeight weight, LeafReaderContext context) throws IOException {
       throw new UnsupportedOperationException();
     }
   }
@@ -251,4 +322,60 @@ public abstract class BaseNormsFormatTestCase extends BaseIndexFileFormatTestCas
   }
   
   // TODO: test thread safety (e.g. across different fields) explicitly here
+
+  /** 
+   * LUCENE-6006: Tests undead norms.
+   *                                 .....            
+   *                             C C  /            
+   *                            /<   /             
+   *             ___ __________/_#__=o             
+   *            /(- /(\_\________   \              
+   *            \ ) \ )_      \o     \             
+   *            /|\ /|\       |'     |             
+   *                          |     _|             
+   *                          /o   __\             
+   *                         / '     |             
+   *                        / /      |             
+   *                       /_/\______|             
+   *                      (   _(    <              
+   *                       \    \    \             
+   *                        \    \    |            
+   *                         \____\____\           
+   *                         ____\_\__\_\          
+   *                       /`   /`     o\          
+   *                       |___ |_______|
+   *
+   */
+  public void testUndeadNorms() throws Exception {
+    Directory dir = newDirectory();
+    RandomIndexWriter w = new RandomIndexWriter(random(), dir);
+    int numDocs = atLeast(1000);
+    List<Integer> toDelete = new ArrayList<>();
+    for(int i=0;i<numDocs;i++) {
+      Document doc = new Document();
+      doc.add(new StringField("id", ""+i, Field.Store.NO));
+      if (random().nextInt(5) == 1) {
+        toDelete.add(i);
+        doc.add(new TextField("content", "some content", Field.Store.NO));
+      }
+      w.addDocument(doc);
+    }
+    for(Integer id : toDelete) {
+      w.deleteDocuments(new Term("id", ""+id));
+    }
+    w.forceMerge(1);
+    IndexReader r = w.getReader();
+
+    // Confusingly, norms should exist, and should all be 0, even though we deleted all docs that had the field "content".  They should not
+    // be undead:
+    NumericDocValues norms = MultiDocValues.getNormValues(r, "content");
+    assertNotNull(norms);
+    for(int i=0;i<r.maxDoc();i++) {
+      assertEquals(0, norms.get(i));
+    }
+
+    r.close();
+    w.close();
+    dir.close();
+  }
 }

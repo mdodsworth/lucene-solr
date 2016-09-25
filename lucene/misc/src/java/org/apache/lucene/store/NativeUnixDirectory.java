@@ -18,13 +18,13 @@ package org.apache.lucene.store;
  */
 
 import java.io.EOFException;
-import java.io.File;
 import java.io.IOException;
 import java.io.FileInputStream;
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.Path;
 
 import org.apache.lucene.store.Directory; // javadoc
 import org.apache.lucene.store.IOContext.Context;
@@ -90,6 +90,7 @@ public class NativeUnixDirectory extends FSDirectory {
   /** Create a new NIOFSDirectory for the named location.
    * 
    * @param path the path of the directory
+   * @param lockFactory to use
    * @param mergeBufferSize Size of buffer to use for
    *    merging.  See {@link #DEFAULT_MERGE_BUFFER_SIZE}.
    * @param minBytesDirect Merges, or files to be opened for
@@ -99,8 +100,8 @@ public class NativeUnixDirectory extends FSDirectory {
    * @param delegate fallback Directory for non-merges
    * @throws IOException If there is a low-level I/O error
    */
-  public NativeUnixDirectory(File path, int mergeBufferSize, long minBytesDirect, Directory delegate) throws IOException {
-    super(path, delegate.getLockFactory());
+  public NativeUnixDirectory(Path path, int mergeBufferSize, long minBytesDirect, LockFactory lockFactory, Directory delegate) throws IOException {
+    super(path, lockFactory);
     if ((mergeBufferSize & ALIGN) != 0) {
       throw new IllegalArgumentException("mergeBufferSize must be 0 mod " + ALIGN + " (got: " + mergeBufferSize + ")");
     }
@@ -112,11 +113,22 @@ public class NativeUnixDirectory extends FSDirectory {
   /** Create a new NIOFSDirectory for the named location.
    * 
    * @param path the path of the directory
+   * @param lockFactory the lock factory to use
    * @param delegate fallback Directory for non-merges
    * @throws IOException If there is a low-level I/O error
    */
-  public NativeUnixDirectory(File path, Directory delegate) throws IOException {
-    this(path, DEFAULT_MERGE_BUFFER_SIZE, DEFAULT_MIN_BYTES_DIRECT, delegate);
+  public NativeUnixDirectory(Path path, LockFactory lockFactory, Directory delegate) throws IOException {
+    this(path, DEFAULT_MERGE_BUFFER_SIZE, DEFAULT_MIN_BYTES_DIRECT, lockFactory, delegate);
+  }  
+
+  /** Create a new NIOFSDirectory for the named location with {@link FSLockFactory#getDefault()}.
+   * 
+   * @param path the path of the directory
+   * @param delegate fallback Directory for non-merges
+   * @throws IOException If there is a low-level I/O error
+   */
+  public NativeUnixDirectory(Path path, Directory delegate) throws IOException {
+    this(path, DEFAULT_MERGE_BUFFER_SIZE, DEFAULT_MIN_BYTES_DIRECT, FSLockFactory.getDefault(), delegate);
   }  
 
   @Override
@@ -125,7 +137,7 @@ public class NativeUnixDirectory extends FSDirectory {
     if (context.context != Context.MERGE || context.mergeInfo.estimatedMergeBytes < minBytesDirect || fileLength(name) < minBytesDirect) {
       return delegate.openInput(name, context);
     } else {
-      return new NativeUnixIndexInput(new File(getDirectory(), name), mergeBufferSize);
+      return new NativeUnixIndexInput(getDirectory().resolve(name), mergeBufferSize);
     }
   }
 
@@ -136,7 +148,7 @@ public class NativeUnixDirectory extends FSDirectory {
       return delegate.createOutput(name, context);
     } else {
       ensureCanWrite(name);
-      return new NativeUnixIndexOutput(new File(getDirectory(), name), mergeBufferSize);
+      return new NativeUnixIndexOutput(getDirectory().resolve(name), mergeBufferSize);
     }
   }
 
@@ -153,7 +165,7 @@ public class NativeUnixDirectory extends FSDirectory {
     private long fileLength;
     private boolean isOpen;
 
-    public NativeUnixIndexOutput(File path, int bufferSize) throws IOException {
+    public NativeUnixIndexOutput(Path path, int bufferSize) throws IOException {
       //this.path = path;
       final FileDescriptor fd = NativePosixUtil.open_direct(path.toString(), false);
       fos = new FileOutputStream(fd);
@@ -271,8 +283,8 @@ public class NativeUnixDirectory extends FSDirectory {
     private long filePos;
     private int bufferPos;
 
-    public NativeUnixIndexInput(File path, int bufferSize) throws IOException {
-      super("NativeUnixIndexInput(path=\"" + path.getPath() + "\")");
+    public NativeUnixIndexInput(Path path, int bufferSize) throws IOException {
+      super("NativeUnixIndexInput(path=\"" + path + "\")");
       final FileDescriptor fd = NativePosixUtil.open_direct(path.toString(), true);
       fis = new FileInputStream(fd);
       channel = fis.getChannel();

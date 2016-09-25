@@ -22,7 +22,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -50,6 +49,7 @@ public final class RequestHandlers {
   // the map implementation should be thread safe
   private final Map<String, SolrRequestHandler> handlers =
       new ConcurrentHashMap<>() ;
+  private final Map<String, SolrRequestHandler> immutableHandlers = Collections.unmodifiableMap(handlers) ;
 
   /**
    * Trim the trailing '/' if its there, and convert null to empty string.
@@ -60,7 +60,7 @@ public final class RequestHandlers {
    * to map to the same handler 
    * 
    */
-  private static String normalize( String p )
+  public static String normalize( String p )
   {
     if(p == null) return "";
     if( p.endsWith( "/" ) && p.length() > 1 )
@@ -115,7 +115,7 @@ public final class RequestHandlers {
    * Returns an unmodifiable Map containing the registered handlers
    */
   public Map<String,SolrRequestHandler> getRequestHandlers() {
-    return Collections.unmodifiableMap( handlers );
+    return immutableHandlers;
   }
 
 
@@ -142,7 +142,12 @@ public final class RequestHandlers {
   void initHandlersFromConfig(SolrConfig config, List<PluginInfo> implicits){
     // use link map so we iterate in the same order
     Map<PluginInfo,SolrRequestHandler> handlers = new LinkedHashMap<>();
-    ArrayList<PluginInfo> infos = new ArrayList<>(implicits);
+    Map<String, PluginInfo> implicitInfoMap= new HashMap<>();
+    //deduping implicit and explicit requesthandlers
+    for (PluginInfo info : implicits) implicitInfoMap.put(info.name,info);
+    for (PluginInfo info : config.getPluginInfos(SolrRequestHandler.class.getName()))
+      if(implicitInfoMap.containsKey(info.name)) implicitInfoMap.remove(info.name);
+    ArrayList<PluginInfo> infos = new ArrayList<>(implicitInfoMap.values());
     infos.addAll(config.getPluginInfos(SolrRequestHandler.class.getName()));
     for (PluginInfo info : infos) {
       try {
@@ -179,7 +184,7 @@ public final class RequestHandlers {
     for (Map.Entry<PluginInfo,SolrRequestHandler> entry : handlers.entrySet()) {
       PluginInfo info = entry.getKey();
       SolrRequestHandler requestHandler = entry.getValue();
-      info = applyParamSet(config, info);
+      info = applyInitParams(config, info);
       if (requestHandler instanceof PluginInfoInitialized) {
        ((PluginInfoInitialized) requestHandler).init(info);
       } else{
@@ -193,22 +198,21 @@ public final class RequestHandlers {
       log.warn("no default request handler is registered (either '/select' or 'standard')");
   }
 
-  private PluginInfo applyParamSet(SolrConfig config, PluginInfo info) {
-    List<ParamSet> paramSets= new ArrayList<>();
-    String p = info.attributes.get("paramSet");
+  private PluginInfo applyInitParams(SolrConfig config, PluginInfo info) {
+    List<InitParams> ags = new ArrayList<>();
+    String p = info.attributes.get(InitParams.TYPE);
     if(p!=null) {
-      for (String paramSet : StrUtils.splitSmart(p, ',')) {
-        if(config.getParamSets().containsKey(paramSet)) paramSets.add(config.getParamSets().get(paramSet));
-        else log.warn("INVALID paramSet {} in requestHandler {}", paramSet, info.toString());
+      for (String arg : StrUtils.splitSmart(p, ',')) {
+        if(config.getInitParams().containsKey(arg)) ags.add(config.getInitParams().get(arg));
+        else log.warn("INVALID paramSet {} in requestHandler {}", arg, info.toString());
       }
     }
-    for (ParamSet paramSet : config.getParamSets().values()) {
-      if(paramSet.matchPath(info.name)) paramSets.add(paramSet);
-    }
-    if(!paramSets.isEmpty()){
+    for (InitParams args : config.getInitParams().values())
+      if(args.matchPath(info.name)) ags.add(args);
+    if(!ags.isEmpty()){
       info = new PluginInfo(info.type, info.attributes, info.initArgs.clone(), info.children);
-      for (ParamSet paramSet : paramSets) {
-        paramSet.apply(info.initArgs);
+      for (InitParams initParam : ags) {
+        initParam.apply(info);
       }
     }
     return info;

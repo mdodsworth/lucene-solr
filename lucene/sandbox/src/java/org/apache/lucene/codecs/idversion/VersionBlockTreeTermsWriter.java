@@ -26,11 +26,11 @@ import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.PostingsWriterBase;
 import org.apache.lucene.codecs.blocktree.BlockTreeTermsWriter;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.Fields;
 import org.apache.lucene.index.IndexFileNames;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
@@ -118,17 +118,17 @@ public final class VersionBlockTreeTermsWriter extends FieldsConsumer {
 
   /** Extension of terms file */
   static final String TERMS_EXTENSION = "tiv";
-  final static String TERMS_CODEC_NAME = "VERSION_BLOCK_TREE_TERMS_DICT";
+  final static String TERMS_CODEC_NAME = "VersionBlockTreeTermsDict";
 
   /** Initial terms format. */
-  public static final int VERSION_START = 0;
+  public static final int VERSION_START = 1;
 
   /** Current terms format. */
   public static final int VERSION_CURRENT = VERSION_START;
 
   /** Extension of terms index file */
   static final String TERMS_INDEX_EXTENSION = "tipv";
-  final static String TERMS_INDEX_CODEC_NAME = "VERSION_BLOCK_TREE_TERMS_INDEX";
+  final static String TERMS_INDEX_CODEC_NAME = "VersionBlockTreeTermsIndex";
 
   private final IndexOutput out;
   private final IndexOutput indexOut;
@@ -199,20 +199,20 @@ public final class VersionBlockTreeTermsWriter extends FieldsConsumer {
       fieldInfos = state.fieldInfos;
       this.minItemsInBlock = minItemsInBlock;
       this.maxItemsInBlock = maxItemsInBlock;
-      CodecUtil.writeHeader(out, TERMS_CODEC_NAME, VERSION_CURRENT);   
+      CodecUtil.writeIndexHeader(out, TERMS_CODEC_NAME, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);   
 
       //DEBUG = state.segmentName.equals("_4a");
 
       final String termsIndexFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, TERMS_INDEX_EXTENSION);
       indexOut = state.directory.createOutput(termsIndexFileName, state.context);
-      CodecUtil.writeHeader(indexOut, TERMS_INDEX_CODEC_NAME, VERSION_CURRENT); 
+      CodecUtil.writeIndexHeader(indexOut, TERMS_INDEX_CODEC_NAME, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix); 
 
       this.postingsWriter = postingsWriter;
       // segment = state.segmentInfo.name;
 
       // System.out.println("BTW.init seg=" + state.segmentName);
 
-      postingsWriter.init(out);                          // have consumer write its format/header
+      postingsWriter.init(out, state);                          // have consumer write its format/header
       success = true;
     } finally {
       if (!success) {
@@ -748,7 +748,7 @@ public final class VersionBlockTreeTermsWriter extends FieldsConsumer {
       // TODO: LUCENE-5693: we don't need this check if we fix IW to not send deleted docs to us on flush:
       if (state != null && ((IDVersionPostingsWriter) postingsWriter).lastDocID != -1) {
         assert state.docFreq != 0;
-        assert fieldInfo.getIndexOptions() == IndexOptions.DOCS_ONLY || state.totalTermFreq >= state.docFreq: "postingsWriter=" + postingsWriter;
+        assert fieldInfo.getIndexOptions() == IndexOptions.DOCS || state.totalTermFreq >= state.docFreq: "postingsWriter=" + postingsWriter;
         pushTerm(text);
 
         PendingTerm term = new PendingTerm(BytesRef.deepCopyOf(text), state);

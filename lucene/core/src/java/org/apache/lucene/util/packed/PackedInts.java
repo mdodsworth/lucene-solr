@@ -19,6 +19,7 @@ package org.apache.lucene.util.packed;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collections;
 
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.NumericDocValues;
@@ -478,6 +479,10 @@ public class PackedInts {
      */
     public abstract int size();
 
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Collections.emptyList();
+    }
   }
 
   /**
@@ -627,7 +632,6 @@ public class PackedInts {
     public final int size() {
       return valueCount;
     }
-
   }
 
   static abstract class MutableImpl extends Mutable {
@@ -651,6 +655,10 @@ public class PackedInts {
       return valueCount;
     }
 
+    @Override
+    public String toString() {
+      return getClass().getSimpleName() + "(valueCount=" + valueCount + ",bitsPerValue=" + bitsPerValue + ")";
+    }
   }
 
   /** A {@link Reader} which has all its values equal to 0 (bitsPerValue = 0). */
@@ -686,7 +694,6 @@ public class PackedInts {
     public long ramBytesUsed() {
       return RamUsageEstimator.alignObjectSize(RamUsageEstimator.NUM_BYTES_OBJECT_HEADER + RamUsageEstimator.NUM_BYTES_INT);
     }
-
   }
 
   /** A write-once Writer.
@@ -808,22 +815,6 @@ public class PackedInts {
         throw new AssertionError("Unknown Writer format: " + format);
     }
   }
-  
-  /**
-   * Expert: Restore a {@link Reader} from a stream without reading metadata at
-   * the beginning of the stream. This method is useful to restore data when
-   * metadata has been previously read using {@link #readHeader(DataInput)}.
-   *
-   * @param in           the stream to read data from, positioned at the beginning of the packed values
-   * @param header       metadata result from <code>readHeader()</code>
-   * @return             a Reader
-   * @throws IOException If there is a low-level I/O error
-   * @see #readHeader(DataInput)
-   * @lucene.internal
-   */
-  public static Reader getReaderNoHeader(DataInput in, Header header) throws IOException {
-    return getReaderNoHeader(in, header.format, header.version, header.valueCount, header.bitsPerValue);
-  }
 
   /**
    * Restore a {@link Reader} from a stream.
@@ -935,23 +926,6 @@ public class PackedInts {
       default:
         throw new AssertionError("Unknwown format: " + format);
     }
-  }
-  
-  /**
-   * Expert: Construct a direct {@link Reader} from an {@link IndexInput} 
-   * without reading metadata at the beginning of the stream. This method is 
-   * useful to restore data when metadata has been previously read using 
-   * {@link #readHeader(DataInput)}.
-   *
-   * @param in           the stream to read data from, positioned at the beginning of the packed values
-   * @param header       metadata result from <code>readHeader()</code>
-   * @return             a Reader
-   * @throws IOException If there is a low-level I/O error
-   * @see #readHeader(DataInput)
-   * @lucene.internal
-   */
-  public static Reader getDirectReaderNoHeader(IndexInput in, Header header) throws IOException {
-    return getDirectReaderNoHeader(in, header.format, header.version, header.valueCount, header.bitsPerValue);
   }
 
   /**
@@ -1207,42 +1181,6 @@ public class PackedInts {
       remaining -= written;
       System.arraycopy(buf, written, buf, 0, remaining);
     }
-  }
-
-  /**
-   * Expert: reads only the metadata from a stream. This is useful to later
-   * restore a stream or open a direct reader via 
-   * {@link #getReaderNoHeader(DataInput, Header)}
-   * or {@link #getDirectReaderNoHeader(IndexInput, Header)}.
-   * @param    in the stream to read data
-   * @return   packed integer metadata.
-   * @throws   IOException If there is a low-level I/O error
-   * @see #getReaderNoHeader(DataInput, Header)
-   * @see #getDirectReaderNoHeader(IndexInput, Header)
-   */
-  public static Header readHeader(DataInput in) throws IOException {
-    final int version = CodecUtil.checkHeader(in, CODEC_NAME, VERSION_START, VERSION_CURRENT);
-    final int bitsPerValue = in.readVInt();
-    assert bitsPerValue > 0 && bitsPerValue <= 64: "bitsPerValue=" + bitsPerValue;
-    final int valueCount = in.readVInt();
-    final Format format = Format.byId(in.readVInt());
-    return new Header(format, valueCount, bitsPerValue, version);
-  }
-  
-  /** Header identifying the structure of a packed integer array. */
-  public static class Header {
-
-    private final Format format;
-    private final int valueCount;
-    private final int bitsPerValue;
-    private final int version;
-
-    public Header(Format format, int valueCount, int bitsPerValue, int version) {
-      this.format = format;
-      this.valueCount = valueCount;
-      this.bitsPerValue = bitsPerValue;
-      this.version = version;
-    }    
   }
 
   /** Check that the block size is a power of 2, in the right bounds, and return

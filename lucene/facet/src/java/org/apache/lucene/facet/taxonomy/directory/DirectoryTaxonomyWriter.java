@@ -4,11 +4,9 @@ import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -25,18 +23,18 @@ import org.apache.lucene.facet.FacetsConfig;
 import org.apache.lucene.facet.taxonomy.FacetLabel;
 import org.apache.lucene.facet.taxonomy.TaxonomyReader;
 import org.apache.lucene.facet.taxonomy.TaxonomyWriter;
-import org.apache.lucene.facet.taxonomy.writercache.TaxonomyWriterCache;
 import org.apache.lucene.facet.taxonomy.writercache.Cl2oTaxonomyWriterCache;
 import org.apache.lucene.facet.taxonomy.writercache.LruTaxonomyWriterCache;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.facet.taxonomy.writercache.TaxonomyWriterCache;
 import org.apache.lucene.index.CorruptIndexException; // javadocs
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
-import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.IndexWriterConfig.OpenMode;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.LogByteSizeMergePolicy;
 import org.apache.lucene.index.ReaderManager;
 import org.apache.lucene.index.SegmentInfos;
@@ -46,8 +44,6 @@ import org.apache.lucene.index.TieredMergePolicy;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.LockObtainFailedException; // javadocs
-import org.apache.lucene.store.NativeFSLockFactory;
-import org.apache.lucene.store.SimpleFSLockFactory;
 import org.apache.lucene.util.BytesRef;
 
 /*
@@ -133,27 +129,10 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
 
   /** Reads the commit data from a Directory. */
   private static Map<String, String> readCommitData(Directory dir) throws IOException {
-    SegmentInfos infos = new SegmentInfos();
-    infos.read(dir);
+    SegmentInfos infos = SegmentInfos.readLatestCommit(dir);
     return infos.getUserData();
   }
   
-  /**
-   * Forcibly unlocks the taxonomy in the named directory.
-   * <P>
-   * Caution: this should only be used by failure recovery code, when it is
-   * known that no other process nor thread is in fact currently accessing
-   * this taxonomy.
-   * <P>
-   * This method is unnecessary if your {@link Directory} uses a
-   * {@link NativeFSLockFactory} instead of the default
-   * {@link SimpleFSLockFactory}. When the "native" lock is used, a lock
-   * does not stay behind forever when the process using it dies. 
-   */
-  public static void unlock(Directory directory) throws IOException {
-    IndexWriter.unlock(directory);
-  }
-
   /**
    * Construct a Taxonomy writer.
    * 
@@ -176,10 +155,7 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
    * @throws CorruptIndexException
    *     if the taxonomy is corrupted.
    * @throws LockObtainFailedException
-   *     if the taxonomy is locked by another writer. If it is known
-   *     that no other concurrent writer is active, the lock might
-   *     have been left around by an old dead process, and should be
-   *     removed using {@link #unlock(Directory)}.
+   *     if the taxonomy is locked by another writer.
    * @throws IOException
    *     if another error occurred.
    */
@@ -279,7 +255,7 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
    * @param openMode see {@link OpenMode}
    */
   protected IndexWriterConfig createIndexWriterConfig(OpenMode openMode) {
-    // TODO: should we use a more optimized Codec, e.g. Pulsing (or write custom)?
+    // TODO: should we use a more optimized Codec?
     // The taxonomy has a unique structure, where each term is associated with one document
 
     // Make sure we use a MergePolicy which always merges adjacent segments and thus
@@ -407,7 +383,7 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
       final BytesRef catTerm = new BytesRef(FacetsConfig.pathToString(categoryPath.components, categoryPath.length));
       TermsEnum termsEnum = null; // reuse
       DocsEnum docs = null; // reuse
-      for (AtomicReaderContext ctx : reader.leaves()) {
+      for (LeafReaderContext ctx : reader.leaves()) {
         Terms terms = ctx.reader().terms(Consts.FULL);
         if (terms != null) {
           termsEnum = terms.iterator(termsEnum);
@@ -700,7 +676,7 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
     try {
       TermsEnum termsEnum = null;
       DocsEnum docsEnum = null;
-      for (AtomicReaderContext ctx : reader.leaves()) {
+      for (LeafReaderContext ctx : reader.leaves()) {
         Terms terms = ctx.reader().terms(Consts.FULL);
         if (terms != null) { // cannot really happen, but be on the safe side
           termsEnum = terms.iterator(termsEnum);
@@ -796,8 +772,8 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
       int base = 0;
       TermsEnum te = null;
       DocsEnum docs = null;
-      for (final AtomicReaderContext ctx : r.leaves()) {
-        final AtomicReader ar = ctx.reader();
+      for (final LeafReaderContext ctx : r.leaves()) {
+        final LeafReader ar = ctx.reader();
         final Terms terms = ar.terms(Consts.FULL);
         te = terms.iterator(te);
         while (te.next() != null) {
@@ -890,14 +866,14 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
    * {@link OrdinalMap} maintained on file system
    */
   public static final class DiskOrdinalMap implements OrdinalMap {
-    File tmpfile;
+    Path tmpfile;
     DataOutputStream out;
 
     /** Sole constructor. */
-    public DiskOrdinalMap(File tmpfile) throws FileNotFoundException {
+    public DiskOrdinalMap(Path tmpfile) throws IOException {
       this.tmpfile = tmpfile;
       out = new DataOutputStream(new BufferedOutputStream(
-          new FileOutputStream(tmpfile)));
+          Files.newOutputStream(tmpfile)));
     }
 
     @Override
@@ -928,7 +904,7 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
       }
       addDone(); // in case this wasn't previously called
       DataInputStream in = new DataInputStream(new BufferedInputStream(
-          new FileInputStream(tmpfile)));
+          Files.newInputStream(tmpfile)));
       map = new int[in.readInt()];
       // NOTE: The current code assumes here that the map is complete,
       // i.e., every ordinal gets one and exactly one value. Otherwise,
@@ -941,9 +917,7 @@ public class DirectoryTaxonomyWriter implements TaxonomyWriter {
       in.close();
 
       // Delete the temporary file, which is no longer needed.
-      if (!tmpfile.delete()) {
-        tmpfile.deleteOnExit();
-      }
+      Files.delete(tmpfile);
 
       return map;
     }

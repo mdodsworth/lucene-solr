@@ -17,7 +17,9 @@ package org.apache.lucene.codecs.bloom;
  * limitations under the License.
  */
 import java.io.IOException;
+import java.util.Collections;
 
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.util.Accountable;
@@ -271,7 +273,7 @@ public class FuzzySet implements Accountable {
       int bitIndex = 0;
       do {
         bitIndex = filter.nextSetBit(bitIndex);
-        if (bitIndex >= 0) {
+        if (bitIndex != DocIdSetIterator.NO_MORE_DOCS) {
           // Project the larger number into a smaller one effectively
           // modulo-ing by using the target bitset size as a mask
           int downSizedBitIndex = bitIndex & rightSizedBitSetSize;
@@ -308,5 +310,15 @@ public class FuzzySet implements Accountable {
   @Override
   public long ramBytesUsed() {
     return RamUsageEstimator.sizeOf(filter.getBits());
+  }
+
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Collections.emptyList();
+  }
+
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(hash=" + hashFunction + ")";
   }
 }

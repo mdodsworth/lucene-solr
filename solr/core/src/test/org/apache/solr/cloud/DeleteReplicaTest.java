@@ -17,10 +17,11 @@ package org.apache.solr.cloud;
  * limitations under the License.
  */
 
-import static org.apache.solr.cloud.OverseerCollectionProcessor.DELETEREPLICA;
 import static org.apache.solr.common.cloud.ZkStateReader.MAX_SHARDS_PER_NODE;
 import static org.apache.solr.cloud.OverseerCollectionProcessor.NUM_SLICES;
+import static org.apache.solr.cloud.OverseerCollectionProcessor.ONLY_IF_DOWN;
 import static org.apache.solr.common.cloud.ZkNodeProps.makeMap;
+import static org.apache.solr.common.params.CollectionParams.CollectionAction.DELETEREPLICA;
 
 import java.io.File;
 import java.io.IOException;
@@ -35,6 +36,7 @@ import org.apache.solr.client.solrj.impl.HttpSolrServer;
 import org.apache.solr.client.solrj.request.CoreAdminRequest;
 import org.apache.solr.client.solrj.request.QueryRequest;
 import org.apache.solr.client.solrj.response.CoreAdminResponse;
+import org.apache.solr.common.SolrException;
 import org.apache.solr.common.cloud.DocCollection;
 import org.apache.solr.common.cloud.Replica;
 import org.apache.solr.common.cloud.Slice;
@@ -100,11 +102,19 @@ public class DeleteReplicaTest extends AbstractFullDistribZkTestBase {
       
       Slice shard1 = null;
       Replica replica1 = null;
+      
+      // Get an active replica
       for (Slice slice : testcoll.getSlices()) {
+        if(replica1 != null)
+          break;
         if ("active".equals(slice.getStr("state"))) {
           shard1 = slice;
-          for (Replica replica : shard1.getReplicas())
-            if ("active".equals(replica.getStr("state"))) replica1 = replica;
+          for (Replica replica : shard1.getReplicas()) {
+            if ("active".equals(replica.getStr("state"))) {
+              replica1 = replica;
+              break;
+            }
+          }
         }
       }
 
@@ -119,19 +129,42 @@ public class DeleteReplicaTest extends AbstractFullDistribZkTestBase {
       } finally {
         replica1Server.shutdown();
       }
+      try {
+        // Should not be able to delete a replica that is up if onlyIfDown=true.
+        tryToRemoveOnlyIfDown(collectionName, client, replica1, shard1.getName());
+        fail("Should have thrown an exception here because the replica is NOT down");
+      } catch (SolrException se) {
+        assertEquals("Should see 400 here ", se.code(), 400);
+        assertTrue("Should have had a good message here", se.getMessage().contains("with onlyIfDown='true', but state is 'active'"));
+        // This bit is a little weak in that if we're screwing up and actually deleting the replica, we might get back
+        // here _before_ the datadir is deleted. But I'd rather not introduce a delay here.
+        assertTrue("dataDir for " + replica1.getName() + " should NOT have been deleted by deleteReplica API with onlyIfDown='true'",
+            new File(dataDir).exists());
+      }
 
-      removeAndWaitForReplicaGone(collectionName, client, replica1,
-          shard1.getName());
+      removeAndWaitForReplicaGone(collectionName, client, replica1, shard1.getName());
       assertFalse("dataDir for " + replica1.getName() + " should have been deleted by deleteReplica API", new File(dataDir).exists());
     } finally {
       client.shutdown();
     }
   }
 
+  protected void tryToRemoveOnlyIfDown(String collectionName, CloudSolrServer client, Replica replica, String shard) throws IOException, SolrServerException {
+    Map m = makeMap("collection", collectionName,
+        "action", DELETEREPLICA.toLower(),
+        "shard", shard,
+        "replica", replica.getName(),
+        ONLY_IF_DOWN, "true");
+    SolrParams params = new MapSolrParams(m);
+    SolrRequest request = new QueryRequest(params);
+    request.setPath("/admin/collections");
+    client.request(request);
+  }
+
   protected void removeAndWaitForReplicaGone(String COLL_NAME,
       CloudSolrServer client, Replica replica, String shard)
       throws SolrServerException, IOException, InterruptedException {
-    Map m = makeMap("collection", COLL_NAME, "action", DELETEREPLICA, "shard",
+    Map m = makeMap("collection", COLL_NAME, "action", DELETEREPLICA.toLower(), "shard",
         shard, "replica", replica.getName());
     SolrParams params = new MapSolrParams(m);
     SolrRequest request = new QueryRequest(params);

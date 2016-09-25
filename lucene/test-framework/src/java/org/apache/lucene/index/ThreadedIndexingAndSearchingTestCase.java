@@ -17,8 +17,8 @@ package org.apache.lucene.index;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -42,6 +42,7 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.FailOnNonBulkMergesInfoStream;
+import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LineFileDocs;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.NamedThreadFactory;
@@ -338,7 +339,7 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
                   // Verify 1) IW is correctly setting
                   // diagnostics, and 2) segment warming for
                   // merged segments is actually happening:
-                  for(final AtomicReaderContext sub : s.getIndexReader().leaves()) {
+                  for(final LeafReaderContext sub : s.getIndexReader().leaves()) {
                     SegmentReader segReader = (SegmentReader) sub.reader();
                     Map<String,String> diagnostics = segReader.getSegmentInfo().info.getDiagnostics();
                     assertNotNull(diagnostics);
@@ -435,7 +436,7 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
 
     Random random = new Random(random().nextLong());
     final LineFileDocs docs = new LineFileDocs(random, true);
-    final File tempDir = createTempDir(testName);
+    final Path tempDir = createTempDir(testName);
     dir = getDirectory(newMockFSDirectory(tempDir)); // some subclasses rely on this being MDW
     if (dir instanceof BaseDirectoryWrapper) {
       ((BaseDirectoryWrapper) dir).setCheckIndexOnClose(false); // don't double-checkIndex, we do it ourselves.
@@ -464,7 +465,7 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
 
     conf.setMergedSegmentWarmer(new IndexWriter.IndexReaderWarmer() {
       @Override
-      public void warm(AtomicReader reader) throws IOException {
+      public void warm(LeafReader reader) throws IOException {
         if (VERBOSE) {
           System.out.println("TEST: now warm merged reader=" + reader);
         }
@@ -653,7 +654,7 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
 
     TestUtil.checkIndex(dir);
     dir.close();
-    TestUtil.rm(tempDir);
+    IOUtils.rm(tempDir);
 
     if (VERBOSE) {
       System.out.println("TEST: done [" + (System.currentTimeMillis()-t0) + " ms]");
@@ -662,8 +663,8 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
 
   private int runQuery(IndexSearcher s, Query q) throws Exception {
     s.search(q, 10);
-    int hitCount = s.search(q, null, 10, new Sort(new SortField("title", SortField.Type.STRING))).totalHits;
-    final Sort dvSort = new Sort(new SortField("title", SortField.Type.STRING));
+    int hitCount = s.search(q, null, 10, new Sort(new SortField("titleDV", SortField.Type.STRING))).totalHits;
+    final Sort dvSort = new Sort(new SortField("titleDV", SortField.Type.STRING));
     int hitCount2 = s.search(q, null, 10, dvSort).totalHits;
     assertEquals(hitCount, hitCount2);
     return hitCount;

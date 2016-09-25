@@ -59,7 +59,7 @@ public class CoreAdminHandlerTest extends SolrTestCaseJ4 {
   public void testCreateWithSysVars() throws Exception {
     useFactory(null); // I require FS-based indexes for this test.
 
-    final File workDir = createTempDir(getCoreName());
+    final File workDir = createTempDir(getCoreName()).toFile();
 
     String coreName = "with_sys_vars";
     File instDir = new File(workDir, coreName);
@@ -120,13 +120,11 @@ public class CoreAdminHandlerTest extends SolrTestCaseJ4 {
     // Should have segments in the directory pointed to by the ${DATA_TEST}.
     File test = new File(dataDir, "index");
     assertTrue("Should have found index dir at " + test.getAbsolutePath(), test.exists());
-    test = new File(test,"segments.gen");
-    assertTrue("Should have found segments.gen at " + test.getAbsolutePath(), test.exists());
   }
 
   @Test
   public void testCoreAdminHandler() throws Exception {
-    final File workDir = createTempDir();
+    final File workDir = createTempDir().toFile();
     
     final CoreContainer cores = h.getCoreContainer();
 

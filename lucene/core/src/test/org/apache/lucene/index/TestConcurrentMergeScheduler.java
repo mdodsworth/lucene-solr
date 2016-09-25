@@ -24,7 +24,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.codecs.lucene41.Lucene41PostingsFormat;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.StringField;
@@ -340,7 +339,6 @@ public class TestConcurrentMergeScheduler extends LuceneTestCase {
     dir.close();
   }
 
-
   private static class TrackingCMS extends ConcurrentMergeScheduler {
     long totMergedBytes;
     CountDownLatch atLeastOneMerge;
@@ -369,7 +367,7 @@ public class TestConcurrentMergeScheduler extends LuceneTestCase {
     iwc.setMergeScheduler(new TrackingCMS(atLeastOneMerge));
     if (TestUtil.getPostingsFormat("id").equals("SimpleText")) {
       // no
-      iwc.setCodec(TestUtil.alwaysPostingsFormat(new Lucene41PostingsFormat()));
+      iwc.setCodec(TestUtil.alwaysPostingsFormat(TestUtil.getDefaultPostingsFormat()));
     }
     IndexWriter w = new IndexWriter(d, iwc);
     for(int i=0;i<1000;i++) {
@@ -454,5 +452,25 @@ public class TestConcurrentMergeScheduler extends LuceneTestCase {
 
     w.close();
     d.close();
+  }
+
+  // LUCENE-6063
+  public void testMaybeStallCalled() throws Exception {
+    final AtomicBoolean wasCalled = new AtomicBoolean();
+    Directory dir = newDirectory();
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()));
+    iwc.setMergeScheduler(new ConcurrentMergeScheduler() {
+        @Override
+        protected void maybeStall() {
+          wasCalled.set(true);
+        }
+      });
+    IndexWriter w = new IndexWriter(dir, iwc);
+    w.addDocument(new Document());
+    w.forceMerge(1);
+    assertTrue(wasCalled.get());
+
+    w.close();
+    dir.close();
   }
 }

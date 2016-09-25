@@ -16,12 +16,10 @@
  */
 package org.apache.lucene.index;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.util.ArrayList;
@@ -30,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.util.StringHelper;
 
 /**
  * Command-line tool that enables listing segments in an
@@ -53,7 +52,7 @@ public class IndexSplitter {
 
   FSDirectory fsDir;
 
-  File dir;
+  Path dir;
 
   public static void main(String[] args) throws Exception {
     if (args.length < 2) {
@@ -64,10 +63,10 @@ public class IndexSplitter {
           .println("IndexSplitter <srcDir> -d (delete the following segments)");
       return;
     }
-    File srcDir = new File(args[0]);
+    Path srcDir = Paths.get(args[0]);
     IndexSplitter is = new IndexSplitter(srcDir);
-    if (!srcDir.exists()) {
-      throw new Exception("srcdir:" + srcDir.getAbsolutePath()
+    if (!Files.exists(srcDir)) {
+      throw new Exception("srcdir:" + srcDir.toAbsolutePath()
           + " doesn't exist");
     }
     if (args[1].equals("-l")) {
@@ -79,7 +78,7 @@ public class IndexSplitter {
       }
       is.remove(segs.toArray(new String[0]));
     } else {
-      File targetDir = new File(args[1]);
+      Path targetDir = Paths.get(args[1]);
       List<String> segs = new ArrayList<>();
       for (int x = 2; x < args.length; x++) {
         segs.add(args[x]);
@@ -88,11 +87,10 @@ public class IndexSplitter {
     }
   }
   
-  public IndexSplitter(File dir) throws IOException {
+  public IndexSplitter(Path dir) throws IOException {
     this.dir = dir;
     fsDir = FSDirectory.open(dir);
-    infos = new SegmentInfos();
-    infos.read(fsDir);
+    infos = SegmentInfos.readLatestCommit(fsDir);
   }
 
   public void listSegments() throws IOException {
@@ -129,8 +127,8 @@ public class IndexSplitter {
     infos.commit(fsDir);
   }
 
-  public void split(File destDir, String[] segs) throws IOException {
-    destDir.mkdirs();
+  public void split(Path destDir, String[] segs) throws IOException {
+    Files.createDirectories(destDir);
     FSDirectory destFSDir = FSDirectory.open(destDir);
     SegmentInfos destInfos = new SegmentInfos();
     destInfos.counter = infos.counter;
@@ -139,33 +137,20 @@ public class IndexSplitter {
       SegmentInfo info = infoPerCommit.info;
       // Same info just changing the dir:
       SegmentInfo newInfo = new SegmentInfo(destFSDir, info.getVersion(), info.name, info.getDocCount(), 
-                                            info.getUseCompoundFile(), info.getCodec(), info.getDiagnostics());
+                                            info.getUseCompoundFile(), info.getCodec(), info.getDiagnostics(), info.getId());
       destInfos.add(new SegmentCommitInfo(newInfo, infoPerCommit.getDelCount(),
           infoPerCommit.getDelGen(), infoPerCommit.getFieldInfosGen(),
           infoPerCommit.getDocValuesGen()));
       // now copy files over
       Collection<String> files = infoPerCommit.files();
       for (final String srcName : files) {
-        File srcFile = new File(dir, srcName);
-        File destFile = new File(destDir, srcName);
-        copyFile(srcFile, destFile);
+        Path srcFile = dir.resolve(srcName);
+        Path destFile = destDir.resolve(srcName);
+        Files.copy(srcFile, destFile);
       }
     }
     destInfos.changed();
     destInfos.commit(destFSDir);
     // System.out.println("destDir:"+destDir.getAbsolutePath());
-  }
-
-  private static final byte[] copyBuffer = new byte[32*1024];
-
-  private static void copyFile(File src, File dst) throws IOException {
-    InputStream in = new FileInputStream(src);
-    OutputStream out = new FileOutputStream(dst);
-    int len;
-    while ((len = in.read(copyBuffer)) > 0) {
-      out.write(copyBuffer, 0, len);
-    }
-    in.close();
-    out.close();
   }
 }

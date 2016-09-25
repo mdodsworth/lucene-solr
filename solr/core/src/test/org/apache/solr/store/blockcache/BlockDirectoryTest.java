@@ -28,6 +28,7 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.MergeInfo;
+import org.apache.lucene.util.IOUtils;
 import org.apache.solr.SolrTestCaseJ4;
 import org.junit.After;
 import org.junit.Before;
@@ -104,8 +105,8 @@ public class BlockDirectoryTest extends SolrTestCaseJ4 {
   @Before
   public void setUp() throws Exception {
     super.setUp();
-    file = createTempDir();
-    FSDirectory dir = FSDirectory.open(new File(file, "base"));
+    file = createTempDir().toFile();
+    FSDirectory dir = FSDirectory.open(new File(file, "base").toPath());
     mapperCache = new MapperCache();
     directory = new BlockDirectory("test", dir, mapperCache, null, true, true);
     random = random();
@@ -119,7 +120,7 @@ public class BlockDirectoryTest extends SolrTestCaseJ4 {
 
   @Test
   public void testEOF() throws IOException {
-    Directory fsDir = FSDirectory.open(new File(file, "normal"));
+    Directory fsDir = FSDirectory.open(new File(file, "normal").toPath());
     String name = "test.eof";
     createFile(name, fsDir, directory);
     long fsLength = fsDir.fileLength(name);
@@ -151,7 +152,7 @@ public class BlockDirectoryTest extends SolrTestCaseJ4 {
     int i = 0;
     try {
       for (; i < 10; i++) {
-        Directory fsDir = FSDirectory.open(new File(file, "normal"));
+        Directory fsDir = FSDirectory.open(new File(file, "normal").toPath());
         String name = getName();
         createFile(name, fsDir, directory);
         assertInputsEquals(name, fsDir, directory);
@@ -232,15 +233,12 @@ public class BlockDirectoryTest extends SolrTestCaseJ4 {
   }
 
   public static void rm(File file) {
-    if (!file.exists()) {
-      return;
+    try {
+      IOUtils.rm(file.toPath());
+    } catch (Throwable ignored) {
+      // TODO: should this class care if a file couldnt be deleted?
+      // this just emulates previous behavior, where only SecurityException would be handled.
     }
-    if (file.isDirectory()) {
-      for (File f : file.listFiles()) {
-        rm(f);
-      }
-    }
-    file.delete();
   }
 
   /**

@@ -25,7 +25,7 @@ import org.apache.lucene.analysis.util.CharFilterFactory;
 import org.apache.lucene.analysis.util.TokenFilterFactory;
 import org.apache.lucene.analysis.util.TokenizerFactory;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.StorableField;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.queries.function.ValueSource;
@@ -265,11 +265,10 @@ public abstract class FieldType extends FieldProperties {
     if (val==null) return null;
 
     org.apache.lucene.document.FieldType newType = new org.apache.lucene.document.FieldType();
-    newType.setIndexed(field.indexed());
     newType.setTokenized(field.isTokenized());
     newType.setStored(field.stored());
     newType.setOmitNorms(field.omitNorms());
-    newType.setIndexOptions(getIndexOptions(field, val));
+    newType.setIndexOptions(field.indexed() ? getIndexOptions(field, val) : IndexOptions.NONE);
     newType.setStoreTermVectors(field.storeTermVector());
     newType.setStoreTermVectorOffsets(field.storeTermOffsets());
     newType.setStoreTermVectorPositions(field.storeTermPositions());
@@ -304,7 +303,7 @@ public abstract class FieldType extends FieldProperties {
    */
   public List<StorableField> createFields(SchemaField field, Object value, float boost) {
     StorableField f = createField( field, value, boost);
-    if (field.hasDocValues() && f.fieldType().docValueType() == null) {
+    if (field.hasDocValues() && f.fieldType().docValuesType() == null) {
       // field types that support doc values should either override createField
       // to return a field with doc values or extend createFields if this can't
       // be done in a single field instance (see StrField for example)
@@ -317,7 +316,7 @@ public abstract class FieldType extends FieldProperties {
 
     IndexOptions options = IndexOptions.DOCS_AND_FREQS_AND_POSITIONS;
     if (field.omitTermFreqAndPositions()) {
-      options = IndexOptions.DOCS_ONLY;
+      options = IndexOptions.DOCS;
     } else if (field.omitPositions()) {
       options = IndexOptions.DOCS_AND_FREQS;
     } else if (field.storeOffsetsWithPositions()) {
@@ -746,7 +745,7 @@ public abstract class FieldType extends FieldProperties {
     if (!field.indexed() && field.hasDocValues()) {
       return field.multiValued() ? new DocTermOrdsRewriteMethod() : new DocValuesRewriteMethod();
     } else {
-      return MultiTermQuery.CONSTANT_SCORE_AUTO_REWRITE_DEFAULT;
+      return MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE;
     }
   }
 
@@ -845,10 +844,11 @@ public abstract class FieldType extends FieldProperties {
       for (String propertyName : FieldProperties.propertyNames) {
         fieldProperties.add(propertyName);
       }
+
       for (String key : args.keySet()) {
         if (fieldProperties.contains(key)) {
           namedPropertyValues.add(key, StrUtils.parseBool(args.get(key)));
-        } else if ( ! CLASS_NAME.equals(key) && ! TYPE_NAME.equals(key)) {
+        } else if (!CLASS_NAME.equals(key) && !TYPE_NAME.equals(key)) {
           namedPropertyValues.add(key, args.get(key));
         }
       }
@@ -963,6 +963,12 @@ public abstract class FieldType extends FieldProperties {
       analyzerProps.add(CLASS_NAME, analyzer.getClass().getName());
     }
     return analyzerProps;
+  }
+
+  /**Converts any Object to a java Object native to this field type
+   */
+  public Object toNativeType(Object val) {
+    return val;
   }
   
   /** 

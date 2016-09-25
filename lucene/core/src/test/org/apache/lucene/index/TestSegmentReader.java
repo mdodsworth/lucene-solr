@@ -84,14 +84,14 @@ public class TestSegmentReader extends LuceneTestCase {
     for(FieldInfo fieldInfo : reader.getFieldInfos()) {
       final String name = fieldInfo.name;
       allFieldNames.add(name);
-      if (fieldInfo.isIndexed()) {
+      if (fieldInfo.getIndexOptions() != IndexOptions.NONE) {
         indexedFieldNames.add(name);
       } else {
         notIndexedFieldNames.add(name);
       }
       if (fieldInfo.hasVectors()) {
         tvFieldNames.add(name);
-      } else if (fieldInfo.isIndexed()) {
+      } else if (fieldInfo.getIndexOptions() != IndexOptions.NONE) {
         noTVFieldNames.add(name);
       }
     }
@@ -172,11 +172,11 @@ public class TestSegmentReader extends LuceneTestCase {
     checkNorms(reader);
   }
 
-  public static void checkNorms(AtomicReader reader) throws IOException {
+  public static void checkNorms(LeafReader reader) throws IOException {
     // test omit norms
     for (int i=0; i<DocHelper.fields.length; i++) {
       IndexableField f = DocHelper.fields[i];
-      if (f.fieldType().indexed()) {
+      if (f.fieldType().indexOptions() != IndexOptions.NONE) {
         assertEquals(reader.getNormValues(f.name()) != null, !f.fieldType().omitNorms());
         assertEquals(reader.getNormValues(f.name()) != null, !DocHelper.noNorms.containsKey(f.name()));
         if (reader.getNormValues(f.name()) == null) {

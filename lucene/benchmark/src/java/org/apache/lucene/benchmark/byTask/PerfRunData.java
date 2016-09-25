@@ -18,8 +18,10 @@ package org.apache.lucene.benchmark.byTask;
  */
 
 import java.io.Closeable;
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Locale;
@@ -37,7 +39,6 @@ import org.apache.lucene.benchmark.byTask.tasks.ReadTask;
 import org.apache.lucene.benchmark.byTask.tasks.SearchTask;
 import org.apache.lucene.benchmark.byTask.utils.AnalyzerFactory;
 import org.apache.lucene.benchmark.byTask.utils.Config;
-import org.apache.lucene.benchmark.byTask.utils.FileUtils;
 import org.apache.lucene.facet.taxonomy.TaxonomyReader;
 import org.apache.lucene.facet.taxonomy.TaxonomyWriter;
 import org.apache.lucene.index.DirectoryReader;
@@ -192,12 +193,12 @@ public class PerfRunData implements Closeable {
   private Directory createDirectory(boolean eraseIndex, String dirName,
       String dirParam) throws IOException {
     if ("FSDirectory".equals(config.get(dirParam,"RAMDirectory"))) {
-      File workDir = new File(config.get("work.dir","work"));
-      File indexDir = new File(workDir,dirName);
-      if (eraseIndex && indexDir.exists()) {
-        FileUtils.fullyDelete(indexDir);
+      Path workDir = Paths.get(config.get("work.dir","work"));
+      Path indexDir = workDir.resolve(dirName);
+      if (eraseIndex && Files.exists(indexDir)) {
+        IOUtils.rm(indexDir);
       }
-      indexDir.mkdirs();
+      Files.createDirectories(indexDir);
       return FSDirectory.open(indexDir);
     } 
 

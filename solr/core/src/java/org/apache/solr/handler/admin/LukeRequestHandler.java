@@ -28,15 +28,14 @@ import org.apache.lucene.analysis.util.TokenFilterFactory;
 import org.apache.lucene.analysis.util.TokenizerFactory;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.index.*;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.DocValuesType;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.similarities.Similarity;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.CharsRef;
 import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.PriorityQueue;
-import org.apache.lucene.util.UnicodeUtil;
 import org.apache.solr.analysis.TokenizerChain;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
@@ -58,9 +57,9 @@ import org.apache.solr.search.SolrIndexSearcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static org.apache.lucene.index.FieldInfo.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS;
-import static org.apache.lucene.index.FieldInfo.IndexOptions.DOCS_AND_FREQS;
-import static org.apache.lucene.index.FieldInfo.IndexOptions.DOCS_ONLY;
+import static org.apache.lucene.index.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS;
+import static org.apache.lucene.index.IndexOptions.DOCS_AND_FREQS;
+import static org.apache.lucene.index.IndexOptions.DOCS;
 
 /**
  * This handler exposes the internal lucene index.  It is inspired by and 
@@ -178,17 +177,17 @@ public class LukeRequestHandler extends RequestHandlerBase
 
     StringBuilder flags = new StringBuilder();
 
-    flags.append( (f != null && f.fieldType().indexed())                     ? FieldFlag.INDEXED.getAbbreviation() : '-' );
+    flags.append( (f != null && f.fieldType().indexOptions() != IndexOptions.NONE)                     ? FieldFlag.INDEXED.getAbbreviation() : '-' );
     flags.append( (f != null && f.fieldType().tokenized())                   ? FieldFlag.TOKENIZED.getAbbreviation() : '-' );
     flags.append( (f != null && f.fieldType().stored())                      ? FieldFlag.STORED.getAbbreviation() : '-' );
-    flags.append( (f != null && f.fieldType().docValueType() != null)        ? FieldFlag.DOC_VALUES.getAbbreviation() : "-" );
+    flags.append( (f != null && f.fieldType().docValuesType() != DocValuesType.NONE)        ? FieldFlag.DOC_VALUES.getAbbreviation() : "-" );
     flags.append( (false)                                          ? FieldFlag.MULTI_VALUED.getAbbreviation() : '-' ); // SchemaField Specific
     flags.append( (f != null && f.fieldType().storeTermVectors())            ? FieldFlag.TERM_VECTOR_STORED.getAbbreviation() : '-' );
     flags.append( (f != null && f.fieldType().storeTermVectorOffsets())   ? FieldFlag.TERM_VECTOR_OFFSET.getAbbreviation() : '-' );
     flags.append( (f != null && f.fieldType().storeTermVectorPositions()) ? FieldFlag.TERM_VECTOR_POSITION.getAbbreviation() : '-' );
     flags.append( (f != null && f.fieldType().omitNorms())                  ? FieldFlag.OMIT_NORMS.getAbbreviation() : '-' );
 
-    flags.append( (f != null && DOCS_ONLY == opts ) ?
+    flags.append( (f != null && DOCS == opts ) ?
         FieldFlag.OMIT_TF.getAbbreviation() : '-' );
 
     flags.append((f != null && DOCS_AND_FREQS == opts) ?
@@ -315,7 +314,7 @@ public class LukeRequestHandler extends RequestHandlerBase
       fields = new TreeSet<>(Arrays.asList(fl.split( "[,\\s]+" )));
     }
 
-    AtomicReader reader = searcher.getAtomicReader();
+    LeafReader reader = searcher.getLeafReader();
     IndexSchema schema = searcher.getSchema();
 
     // Don't be tempted to put this in the loop below, the whole point here is to alphabetize the fields!
@@ -385,7 +384,7 @@ public class LukeRequestHandler extends RequestHandlerBase
   // Just get a document with the term in it, the first one will do!
   // Is there a better way to do this? Shouldn't actually be very costly
   // to do it this way.
-  private static StoredDocument getFirstLiveDoc(Terms terms, AtomicReader reader) throws IOException {
+  private static StoredDocument getFirstLiveDoc(Terms terms, LeafReader reader) throws IOException {
     DocsEnum docsEnum = null;
     TermsEnum termsEnum = terms.iterator(null);
     BytesRef text;
@@ -572,10 +571,10 @@ public class LukeRequestHandler extends RequestHandlerBase
   /** Returns the sum of RAM bytes used by each segment */
   private static long getIndexHeapUsed(DirectoryReader reader) {
     long indexHeapRamBytesUsed = 0;
-    for(AtomicReaderContext atomicReaderContext : reader.leaves()) {
-      AtomicReader atomicReader = atomicReaderContext.reader();
-      if (atomicReader instanceof SegmentReader) {
-        indexHeapRamBytesUsed += ((SegmentReader) atomicReader).ramBytesUsed();
+    for(LeafReaderContext leafReaderContext : reader.leaves()) {
+      LeafReader leafReader = leafReaderContext.reader();
+      if (leafReader instanceof SegmentReader) {
+        indexHeapRamBytesUsed += ((SegmentReader) leafReader).ramBytesUsed();
       } else {
         // Not supported for any reader that is not a SegmentReader
         return -1;

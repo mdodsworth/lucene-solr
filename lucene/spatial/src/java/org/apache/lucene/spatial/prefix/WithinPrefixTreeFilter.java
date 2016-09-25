@@ -17,6 +17,17 @@ package org.apache.lucene.spatial.prefix;
  * limitations under the License.
  */
 
+import java.io.IOException;
+
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.DocIdSet;
+import org.apache.lucene.spatial.prefix.tree.Cell;
+import org.apache.lucene.spatial.prefix.tree.CellIterator;
+import org.apache.lucene.spatial.prefix.tree.SpatialPrefixTree;
+import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.BitDocIdSet;
+import org.apache.lucene.util.FixedBitSet;
+
 import com.spatial4j.core.context.SpatialContext;
 import com.spatial4j.core.distance.DistanceUtils;
 import com.spatial4j.core.shape.Circle;
@@ -24,15 +35,6 @@ import com.spatial4j.core.shape.Point;
 import com.spatial4j.core.shape.Rectangle;
 import com.spatial4j.core.shape.Shape;
 import com.spatial4j.core.shape.SpatialRelation;
-import org.apache.lucene.index.AtomicReaderContext;
-import org.apache.lucene.search.DocIdSet;
-import org.apache.lucene.spatial.prefix.tree.Cell;
-import org.apache.lucene.spatial.prefix.tree.CellIterator;
-import org.apache.lucene.spatial.prefix.tree.SpatialPrefixTree;
-import org.apache.lucene.util.Bits;
-import org.apache.lucene.util.FixedBitSet;
-
-import java.io.IOException;
 
 /**
  * Finds docs where its indexed shape is {@link org.apache.lucene.spatial.query.SpatialOperation#IsWithin
@@ -119,7 +121,7 @@ public class WithinPrefixTreeFilter extends AbstractVisitingPrefixTreeFilter {
 
 
   @Override
-  public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) throws IOException {
+  public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) throws IOException {
     return new VisitorTemplate(context, acceptDocs, true) {
       private FixedBitSet inside;
       private FixedBitSet outside;
@@ -134,7 +136,7 @@ public class WithinPrefixTreeFilter extends AbstractVisitingPrefixTreeFilter {
       @Override
       protected DocIdSet finish() {
         inside.andNot(outside);
-        return inside;
+        return new BitDocIdSet(inside);
       }
 
       @Override

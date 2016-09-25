@@ -18,6 +18,7 @@ package org.apache.solr.schema;
  */
 
 import org.apache.lucene.document.FieldType;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.StorableField;
 import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.queries.function.valuesource.EnumFieldSource;
@@ -381,11 +382,10 @@ public class EnumField extends PrimitiveFieldType {
     String intAsString =  intValue.toString();
     final FieldType newType = new FieldType();
 
-    newType.setIndexed(field.indexed());
     newType.setTokenized(field.isTokenized());
     newType.setStored(field.stored());
     newType.setOmitNorms(field.omitNorms());
-    newType.setIndexOptions(getIndexOptions(field, intAsString));
+    newType.setIndexOptions(field.indexed() ? getIndexOptions(field, intAsString) : IndexOptions.NONE);
     newType.setStoreTermVectors(field.storeTermVector());
     newType.setStoreTermVectorOffsets(field.storeTermOffsets());
     newType.setStoreTermVectorPositions(field.storeTermPositions());

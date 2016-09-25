@@ -17,19 +17,14 @@
 
 package org.apache.solr.handler.component;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
-import java.util.ArrayList;
-import java.util.LinkedList;
-import java.util.List;
-
+import org.apache.lucene.index.ExitableDirectoryReader;
 import org.apache.solr.client.solrj.SolrServerException;
+import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.ShardParams;
-import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.core.CloseHook;
@@ -38,12 +33,19 @@ import org.apache.solr.core.SolrCore;
 import org.apache.solr.handler.RequestHandlerBase;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
+import org.apache.solr.search.SolrQueryTimeoutImpl;
 import org.apache.solr.util.RTimer;
 import org.apache.solr.util.SolrPluginUtils;
 import org.apache.solr.util.plugin.PluginInfoInitialized;
 import org.apache.solr.util.plugin.SolrCoreAware;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
 
 
 /**
@@ -76,7 +78,6 @@ public class SearchHandler extends RequestHandlerBase implements SolrCoreAware ,
     names.add( HighlightComponent.COMPONENT_NAME );
     names.add( StatsComponent.COMPONENT_NAME );
     names.add( DebugComponent.COMPONENT_NAME );
-    names.add( AnalyticsComponent.COMPONENT_NAME );
     names.add( ExpandComponent.COMPONENT_NAME);
     return names;
   }
@@ -213,30 +214,51 @@ public class SearchHandler extends RequestHandlerBase implements SolrCoreAware ,
     if (!rb.isDistrib) {
       // a normal non-distributed request
 
-      // The semantics of debugging vs not debugging are different enough that
-      // it makes sense to have two control loops
-      if(!rb.isDebug()) {
-        // Process
-        for( SearchComponent c : components ) {
-          c.process(rb);
-        }
+      long timeAllowed = req.getParams().getLong(CommonParams.TIME_ALLOWED, -1L);
+      if (timeAllowed > 0L) {
+        SolrQueryTimeoutImpl.set(timeAllowed);
       }
-      else {
-        // Process
-        RTimer subt = timer.sub( "process" );
-        for( SearchComponent c : components ) {
-          rb.setTimer( subt.sub( c.getName() ) );
-          c.process(rb);
-          rb.getTimer().stop();
+      try {
+        // The semantics of debugging vs not debugging are different enough that
+        // it makes sense to have two control loops
+        if(!rb.isDebug()) {
+          // Process
+          for( SearchComponent c : components ) {
+            c.process(rb);
+          }
         }
-        subt.stop();
-        timer.stop();
+        else {
+          // Process
+          RTimer subt = timer.sub( "process" );
+          for( SearchComponent c : components ) {
+            rb.setTimer( subt.sub( c.getName() ) );
+            c.process(rb);
+            rb.getTimer().stop();
+          }
+          subt.stop();
+          timer.stop();
 
-        // add the timing info
-        if (rb.isDebugTimings()) {
-          rb.addDebugInfo("timing", timer.asNamedList() );
+          // add the timing info
+          if (rb.isDebugTimings()) {
+            rb.addDebugInfo("timing", timer.asNamedList() );
+          }
         }
-      }      
+      } catch (ExitableDirectoryReader.ExitingReaderException ex) {
+        log.warn( "Query: " + req.getParamString() + "; " + ex.getMessage());
+        SolrDocumentList r = (SolrDocumentList) rb.rsp.getValues().get("response");
+        if(r == null)
+          r = new SolrDocumentList();
+        r.setNumFound(0);
+        rb.rsp.add("response", r);
+        if(rb.isDebug()) {
+          NamedList debug = new NamedList();
+          debug.add("explain", new NamedList());
+          rb.rsp.add("debug", debug);
+        }
+        rb.rsp.getResponseHeader().add("partialResults", Boolean.TRUE);
+      } finally {
+        SolrQueryTimeoutImpl.reset();
+      }
     } else {
       // a distributed request
 

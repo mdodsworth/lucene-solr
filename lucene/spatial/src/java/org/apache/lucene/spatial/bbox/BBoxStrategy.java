@@ -17,16 +17,11 @@ package org.apache.lucene.spatial.bbox;
  * limitations under the License.
  */
 
-import com.spatial4j.core.context.SpatialContext;
-import com.spatial4j.core.shape.Point;
-import com.spatial4j.core.shape.Rectangle;
-import com.spatial4j.core.shape.Shape;
-
 import org.apache.lucene.document.DoubleField;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.StringField;
-import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.queries.function.ValueSource;
@@ -43,9 +38,12 @@ import org.apache.lucene.spatial.query.SpatialArgs;
 import org.apache.lucene.spatial.query.SpatialOperation;
 import org.apache.lucene.spatial.query.UnsupportedSpatialOperation;
 import org.apache.lucene.spatial.util.DistanceToShapeValueSource;
-import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.NumericUtils;
+import com.spatial4j.core.context.SpatialContext;
+import com.spatial4j.core.shape.Point;
+import com.spatial4j.core.shape.Rectangle;
+import com.spatial4j.core.shape.Shape;
 
 
 /**
@@ -71,7 +69,7 @@ import org.apache.lucene.util.NumericUtils;
  * The {@link #makeOverlapRatioValueSource(com.spatial4j.core.shape.Rectangle, double)}
  * works by calculating the query bbox overlap percentage against the indexed
  * shape overlap percentage. The indexed shape's coordinates are retrieved from
- * {@link AtomicReader#getNumericDocValues}.
+ * {@link org.apache.lucene.index.LeafReader#getNumericDocValues}.
  *
  * @lucene.experimental
  */
@@ -108,7 +106,7 @@ public class BBoxStrategy extends SpatialStrategy {
 
     FieldType fieldType = new FieldType(DoubleField.TYPE_NOT_STORED);
     fieldType.setNumericPrecisionStep(8);//Solr's default
-    fieldType.setDocValueType(FieldInfo.DocValuesType.NUMERIC);
+    fieldType.setDocValuesType(DocValuesType.NUMERIC);
     setFieldType(fieldType);
   }
 
@@ -132,7 +130,7 @@ public class BBoxStrategy extends SpatialStrategy {
     //for xdlFieldType, copy some similar options. Don't do docValues since it isn't needed here.
     xdlFieldType = new FieldType(StringField.TYPE_NOT_STORED);
     xdlFieldType.setStored(fieldType.stored());
-    xdlFieldType.setIndexed(fieldType.indexed());
+    xdlFieldType.setIndexOptions(fieldType.indexOptions());
     xdlFieldType.freeze();
   }
 

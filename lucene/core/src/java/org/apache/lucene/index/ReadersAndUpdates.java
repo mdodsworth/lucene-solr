@@ -451,7 +451,7 @@ class ReadersAndUpdates {
     final IOContext infosContext = new IOContext(new FlushInfo(info.info.getDocCount(), estInfosSize));
     // separately also track which files were created for this gen
     final TrackingDirectoryWrapper trackingDir = new TrackingDirectoryWrapper(dir);
-    infosFormat.getFieldInfosWriter().write(trackingDir, info.info.name, segmentSuffix, fieldInfos, infosContext);
+    infosFormat.write(trackingDir, info.info, segmentSuffix, fieldInfos, infosContext);
     info.advanceFieldInfosGen();
     return trackingDir.getCreatedFiles();
   }
@@ -496,11 +496,13 @@ class ReadersAndUpdates {
         }
         // create new fields or update existing ones to have NumericDV type
         for (String f : dvUpdates.numericDVUpdates.keySet()) {
-          builder.addOrUpdate(f, NumericDocValuesField.TYPE);
+          FieldInfo fieldInfo = builder.getOrAdd(f);
+          fieldInfo.setDocValuesType(DocValuesType.NUMERIC);
         }
         // create new fields or update existing ones to have BinaryDV type
         for (String f : dvUpdates.binaryDVUpdates.keySet()) {
-          builder.addOrUpdate(f, BinaryDocValuesField.TYPE);
+          FieldInfo fieldInfo = builder.getOrAdd(f);
+          fieldInfo.setDocValuesType(DocValuesType.BINARY);
         }
         
         fieldInfos = builder.finish();

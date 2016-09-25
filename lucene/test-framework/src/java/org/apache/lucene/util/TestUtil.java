@@ -17,10 +17,7 @@ package org.apache.lucene.util;
  * limitations under the License.
  */
 
-import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -28,24 +25,31 @@ import java.io.PrintStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.CharBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
-import java.util.Enumeration;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import java.util.zip.ZipInputStream;
 
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.DocValuesFormat;
 import org.apache.lucene.codecs.PostingsFormat;
-import org.apache.lucene.codecs.lucene410.Lucene410Codec;
+import org.apache.lucene.codecs.asserting.AssertingCodec;
+import org.apache.lucene.codecs.blockterms.LuceneFixedGap;
+import org.apache.lucene.codecs.blocktreeords.BlockTreeOrdsPostingsFormat;
+import org.apache.lucene.codecs.lucene50.Lucene50Codec;
+import org.apache.lucene.codecs.lucene50.Lucene50DocValuesFormat;
+import org.apache.lucene.codecs.lucene50.Lucene50PostingsFormat;
 import org.apache.lucene.codecs.perfield.PerFieldDocValuesFormat;
 import org.apache.lucene.codecs.perfield.PerFieldPostingsFormat;
 import org.apache.lucene.document.BinaryDocValuesField;
@@ -58,36 +62,33 @@ import org.apache.lucene.document.IntField;
 import org.apache.lucene.document.LongField;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.SortedDocValuesField;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.CheckIndex;
-import org.apache.lucene.index.CheckIndex.Status.DocValuesStatus;
-import org.apache.lucene.index.CheckIndex.Status.FieldNormStatus;
-import org.apache.lucene.index.CheckIndex.Status.StoredFieldStatus;
-import org.apache.lucene.index.CheckIndex.Status.TermIndexStatus;
-import org.apache.lucene.index.CheckIndex.Status.TermVectorStatus;
 import org.apache.lucene.index.ConcurrentMergeScheduler;
+import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
-import org.apache.lucene.index.FieldInfo.DocValuesType;
+import org.apache.lucene.index.FilterLeafReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexableField;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.LogMergePolicy;
 import org.apache.lucene.index.MergePolicy;
 import org.apache.lucene.index.MergeScheduler;
 import org.apache.lucene.index.MultiFields;
+import org.apache.lucene.index.SegmentReader;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.index.TieredMergePolicy;
 import org.apache.lucene.search.FieldDoc;
-import org.apache.lucene.search.FilteredQuery;
 import org.apache.lucene.search.FilteredQuery.FilterStrategy;
+import org.apache.lucene.search.FilteredQuery;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.NoLockFactory;
 import org.junit.Assert;
-
 import com.carrotsearch.randomizedtesting.generators.RandomInts;
 import com.carrotsearch.randomizedtesting.generators.RandomPicks;
 
@@ -99,81 +100,95 @@ public final class TestUtil {
     //
   }
 
-  /**
-   * Deletes one or more files or directories (and everything underneath it).
-   * 
-   * @throws IOException if any of the given files (or their subhierarchy files in case
-   * of directories) cannot be removed.
-   */
-  public static void rm(File... locations) throws IOException {
-    LinkedHashSet<File> unremoved = rm(new LinkedHashSet<File>(), locations);
-    if (!unremoved.isEmpty()) {
-      StringBuilder b = new StringBuilder("Could not remove the following files (in the order of attempts):\n");
-      for (File f : unremoved) {
-        b.append("   ")
-         .append(f.getAbsolutePath())
-         .append("\n");
-      }
-      throw new IOException(b.toString());
-    }
-  }
-
-  private static LinkedHashSet<File> rm(LinkedHashSet<File> unremoved, File... locations) {
-    if (locations != null) {
-      for (File location : locations) {
-        if (location != null && location.exists()) {
-          if (location.isDirectory()) {
-            rm(unremoved, location.listFiles());
-          }
-  
-          if (!location.delete()) {
-            unremoved.add(location);
-          }
-        }
-      }
-    }
-    return unremoved;
-  }
-
   /** 
    * Convenience method unzipping zipName into destDir, cleaning up 
-   * destDir first. 
+   * destDir first.
+   * Closes the given InputStream after extracting! 
    */
-  public static void unzip(File zipName, File destDir) throws IOException {
-    rm(destDir);
-    destDir.mkdir();
+  public static void unzip(InputStream in, Path destDir) throws IOException {
+    IOUtils.rm(destDir);
+    Files.createDirectory(destDir);
 
-    ZipFile zipFile = new ZipFile(zipName);
-    Enumeration<? extends ZipEntry> entries = zipFile.entries();
-
-    while (entries.hasMoreElements()) {
-      ZipEntry entry = entries.nextElement();
-      
-      InputStream in = zipFile.getInputStream(entry);
-      File targetFile = new File(destDir, entry.getName());
-      if (entry.isDirectory()) {
-        // allow unzipping with directory structure
-        targetFile.mkdirs();
-      } else {
-        if (targetFile.getParentFile()!=null) {
-          // be on the safe side: do not rely on that directories are always extracted
-          // before their children (although this makes sense, but is it guaranteed?)
-          targetFile.getParentFile().mkdirs();   
-        }
-        OutputStream out = new BufferedOutputStream(new FileOutputStream(targetFile));
+    try (ZipInputStream zipInput = new ZipInputStream(in)) {
+      ZipEntry entry;
+      byte[] buffer = new byte[8192];
+      while ((entry = zipInput.getNextEntry()) != null) {
+        Path targetFile = destDir.resolve(entry.getName());
         
-        byte[] buffer = new byte[8192];
-        int len;
-        while((len = in.read(buffer)) >= 0) {
-          out.write(buffer, 0, len);
+        // be on the safe side: do not rely on that directories are always extracted
+        // before their children (although this makes sense, but is it guaranteed?)
+        Files.createDirectories(targetFile.getParent());
+        if (!entry.isDirectory()) {
+          OutputStream out = Files.newOutputStream(targetFile);
+          int len;
+          while((len = zipInput.read(buffer)) >= 0) {
+            out.write(buffer, 0, len);
+          }
+          out.close();
         }
-        
-        in.close();
-        out.close();
+        zipInput.closeEntry();
       }
     }
-    
-    zipFile.close();
+  }
+  
+  /** 
+   * Checks that the provided iterator is well-formed.
+   * <ul>
+   *   <li>is read-only: does not allow {@code remove}
+   *   <li>returns {@code expectedSize} number of elements
+   *   <li>does not return null elements, unless {@code allowNull} is true.
+   *   <li>throws NoSuchElementException if {@code next} is called
+   *       after {@code hasNext} returns false. 
+   * </ul>
+   */
+  public static <T> void checkIterator(Iterator<T> iterator, long expectedSize, boolean allowNull) {
+    for (long i = 0; i < expectedSize; i++) {
+      boolean hasNext = iterator.hasNext();
+      assert hasNext;
+      T v = iterator.next();
+      assert allowNull || v != null;
+      try {
+        iterator.remove();
+        throw new AssertionError("broken iterator (supports remove): " + iterator);
+      } catch (UnsupportedOperationException expected) {
+        // ok
+      }
+    }
+    assert !iterator.hasNext();
+    try {
+      iterator.next();
+      throw new AssertionError("broken iterator (allows next() when hasNext==false) " + iterator);
+    } catch (NoSuchElementException expected) {
+      // ok
+    }
+  }
+  
+  /** 
+   * Checks that the provided iterator is well-formed.
+   * <ul>
+   *   <li>is read-only: does not allow {@code remove}
+   *   <li>does not return null elements.
+   *   <li>throws NoSuchElementException if {@code next} is called
+   *       after {@code hasNext} returns false. 
+   * </ul>
+   */
+  public static <T> void checkIterator(Iterator<T> iterator) {
+    while (iterator.hasNext()) {
+      T v = iterator.next();
+      assert v != null;
+      try {
+        iterator.remove();
+        throw new AssertionError("broken iterator (supports remove): " + iterator);
+      } catch (UnsupportedOperationException expected) {
+        // ok
+      }
+    }
+    try {
+      iterator.next();
+      throw new AssertionError("broken iterator (allows next() when hasNext==false) " + iterator);
+    } catch (NoSuchElementException expected) {
+      // ok
+    }
   }
   
   public static void syncConcurrentMerges(IndexWriter writer) {
@@ -200,44 +215,60 @@ public final class TestUtil {
    *  look for any other corruption.  */
   public static CheckIndex.Status checkIndex(Directory dir, boolean crossCheckTermVectors, boolean failFast) throws IOException {
     ByteArrayOutputStream bos = new ByteArrayOutputStream(1024);
-    CheckIndex checker = new CheckIndex(dir);
-    checker.setCrossCheckTermVectors(crossCheckTermVectors);
-    checker.setFailFast(failFast);
-    checker.setInfoStream(new PrintStream(bos, false, IOUtils.UTF_8), false);
-    CheckIndex.Status indexStatus = checker.checkIndex(null);
-    if (indexStatus == null || indexStatus.clean == false) {
-      System.out.println("CheckIndex failed");
-      System.out.println(bos.toString(IOUtils.UTF_8));
-      throw new RuntimeException("CheckIndex failed");
-    } else {
-      if (LuceneTestCase.INFOSTREAM) {
+    // TODO: actually use the dir's locking, unless test uses a special method?
+    // some tests e.g. exception tests become much more complicated if they have to close the writer
+    try (CheckIndex checker = new CheckIndex(dir, NoLockFactory.INSTANCE.makeLock(dir, "bogus"))) {
+      checker.setCrossCheckTermVectors(crossCheckTermVectors);
+      checker.setFailFast(failFast);
+      checker.setInfoStream(new PrintStream(bos, false, IOUtils.UTF_8), false);
+      CheckIndex.Status indexStatus = checker.checkIndex(null);
+      
+      if (indexStatus == null || indexStatus.clean == false) {
+        System.out.println("CheckIndex failed");
         System.out.println(bos.toString(IOUtils.UTF_8));
+        throw new RuntimeException("CheckIndex failed");
+      } else {
+        if (LuceneTestCase.INFOSTREAM) {
+          System.out.println(bos.toString(IOUtils.UTF_8));
+        }
+        return indexStatus;
       }
-      return indexStatus;
     }
   }
   
   /** This runs the CheckIndex tool on the Reader.  If any
    *  issues are hit, a RuntimeException is thrown */
   public static void checkReader(IndexReader reader) throws IOException {
-    for (AtomicReaderContext context : reader.leaves()) {
+    for (LeafReaderContext context : reader.leaves()) {
       checkReader(context.reader(), true);
     }
   }
   
-  public static void checkReader(AtomicReader reader, boolean crossCheckTermVectors) throws IOException {
+  public static void checkReader(LeafReader reader, boolean crossCheckTermVectors) throws IOException {
     ByteArrayOutputStream bos = new ByteArrayOutputStream(1024);
     PrintStream infoStream = new PrintStream(bos, false, IOUtils.UTF_8);
 
     reader.checkIntegrity();
-    FieldNormStatus fieldNormStatus = CheckIndex.testFieldNorms(reader, infoStream, true);
-    TermIndexStatus termIndexStatus = CheckIndex.testPostings(reader, infoStream, false, true);
-    StoredFieldStatus storedFieldStatus = CheckIndex.testStoredFields(reader, infoStream, true);
-    TermVectorStatus termVectorStatus = CheckIndex.testTermVectors(reader, infoStream, false, crossCheckTermVectors, true);
-    DocValuesStatus docValuesStatus = CheckIndex.testDocValues(reader, infoStream, true);
+    CheckIndex.testLiveDocs(reader, infoStream, true);
+    CheckIndex.testFieldInfos(reader, infoStream, true);
+    CheckIndex.testFieldNorms(reader, infoStream, true);
+    CheckIndex.testPostings(reader, infoStream, false, true);
+    CheckIndex.testStoredFields(reader, infoStream, true);
+    CheckIndex.testTermVectors(reader, infoStream, false, crossCheckTermVectors, true);
+    CheckIndex.testDocValues(reader, infoStream, true);
     
     if (LuceneTestCase.INFOSTREAM) {
       System.out.println(bos.toString(IOUtils.UTF_8));
+    }
+    
+    LeafReader unwrapped = FilterLeafReader.unwrap(reader);
+    if (unwrapped instanceof SegmentReader) {
+      SegmentReader sr = (SegmentReader) unwrapped;
+      long bytesUsed = sr.ramBytesUsed(); 
+      if (sr.ramBytesUsed() < 0) {
+        throw new IllegalStateException("invalid ramBytesUsed for reader: " + bytesUsed);
+      }
+      assert Accountables.toString(sr) != null;
     }
   }
 
@@ -678,7 +709,7 @@ public final class TestUtil {
     if (LuceneTestCase.VERBOSE) {
       System.out.println("forcing postings format to:" + format);
     }
-    return new Lucene410Codec() {
+    return new AssertingCodec() {
       @Override
       public PostingsFormat getPostingsFormatForField(String field) {
         return format;
@@ -696,12 +727,53 @@ public final class TestUtil {
     if (LuceneTestCase.VERBOSE) {
       System.out.println("forcing docvalues format to:" + format);
     }
-    return new Lucene410Codec() {
+    return new AssertingCodec() {
       @Override
       public DocValuesFormat getDocValuesFormatForField(String field) {
         return format;
       }
     };
+  }
+  
+  /** 
+   * Returns the actual default codec (e.g. LuceneMNCodec) for this version of Lucene.
+   * This may be different than {@link Codec#getDefault()} because that is randomized. 
+   */
+  public static Codec getDefaultCodec() {
+    return new Lucene50Codec();
+  }
+  
+  /** 
+   * Returns the actual default postings format (e.g. LuceneMNPostingsFormat for this version of Lucene.
+   */
+  public static PostingsFormat getDefaultPostingsFormat() {
+    return new Lucene50PostingsFormat();
+  }
+  
+  /** 
+   * Returns the actual default postings format (e.g. LuceneMNPostingsFormat for this version of Lucene.
+   * @lucene.internal this may disappear at any time
+   */
+  public static PostingsFormat getDefaultPostingsFormat(int minItemsPerBlock, int maxItemsPerBlock) {
+    return new Lucene50PostingsFormat(minItemsPerBlock, maxItemsPerBlock);
+  }
+  
+  /** Returns a random postings format that supports term ordinals */
+  public static PostingsFormat getPostingsFormatWithOrds(Random r) {
+    switch (r.nextInt(2)) {
+      case 0: return new LuceneFixedGap();
+      case 1: return new BlockTreeOrdsPostingsFormat();
+      // TODO: these don't actually support ords!
+      //case 2: return new FSTOrdPostingsFormat();
+      default: throw new AssertionError();
+    }
+  }
+  
+  /** 
+   * Returns the actual default docvalues format (e.g. LuceneMNDocValuesFormat for this version of Lucene.
+   */
+  public static DocValuesFormat getDefaultDocValuesFormat() {
+    return new Lucene50DocValuesFormat();
   }
 
   // TODO: generalize all 'test-checks-for-crazy-codecs' to
@@ -815,16 +887,16 @@ public final class TestUtil {
     for(IndexableField f : doc1.getFields()) {
       final Field field1 = (Field) f;
       final Field field2;
-      final DocValuesType dvType = field1.fieldType().docValueType();
+      final DocValuesType dvType = field1.fieldType().docValuesType();
       final NumericType numType = field1.fieldType().numericType();
-      if (dvType != null) {
+      if (dvType != DocValuesType.NONE) {
         switch(dvType) {
           case NUMERIC:
             field2 = new NumericDocValuesField(field1.name(), field1.numericValue().longValue());
             break;
           case BINARY:
             field2 = new BinaryDocValuesField(field1.name(), field1.binaryValue());
-          break;
+            break;
           case SORTED:
             field2 = new SortedDocValuesField(field1.name(), field1.binaryValue());
             break;
@@ -965,7 +1037,7 @@ public final class TestUtil {
       case 4:
         return new FilteredQuery.RandomAccessFilterStrategy() {
           @Override
-          protected boolean useRandomAccess(Bits bits, int firstFilterDoc) {
+          protected boolean useRandomAccess(Bits bits, long filterCost) {
             return LuceneTestCase.random().nextBoolean();
           }
         };

@@ -29,11 +29,12 @@ import static java.util.Collections.unmodifiableMap;
  * An Object which represents a Plugin of any type 
  *
  */
-public class PluginInfo {
+public class PluginInfo implements MapSerializable{
   public final String name, className, type;
   public final NamedList initArgs;
   public final Map<String, String> attributes;
   public final List<PluginInfo> children;
+  public final boolean isFromSolrConfig;
 
   public PluginInfo(String type, Map<String, String> attrs ,NamedList initArgs, List<PluginInfo> children) {
     this.type = type;
@@ -42,6 +43,7 @@ public class PluginInfo {
     this.initArgs = initArgs;
     attributes = unmodifiableMap(attrs);
     this.children = children == null ? Collections.<PluginInfo>emptyList(): unmodifiableList(children);
+    isFromSolrConfig = false;
   }
 
 
@@ -52,6 +54,7 @@ public class PluginInfo {
     initArgs = DOMUtil.childNodesToNamedList(node);
     attributes = unmodifiableMap(DOMUtil.toMap(node.getAttributes()));
     children = loadSubPlugins(node);
+    isFromSolrConfig = true;
   }
 
   private List<PluginInfo> loadSubPlugins(Node node) {
@@ -91,6 +94,28 @@ public class PluginInfo {
   public PluginInfo getChild(String type){
     List<PluginInfo> l = getChildren(type);
     return  l.isEmpty() ? null:l.get(0);
+  }
+ public Map<String,Object> toMap(){
+    LinkedHashMap m = new LinkedHashMap(attributes);
+    if(initArgs!=null ) m.putAll(initArgs.asMap(3));
+    if(children != null){
+      for (PluginInfo child : children) {
+        Object old = m.get(child.name);
+        if(old == null){
+          m.put(child.name, child.toMap());
+        } else if (old instanceof List) {
+          List list = (List) old;
+          list.add(child.toMap());
+        }  else {
+          ArrayList l = new ArrayList();
+          l.add(old);
+          l.add(child.toMap());
+          m.put(child.name,l);
+        }
+      }
+
+    }
+    return m;
   }
 
   /**Filter children by type

@@ -19,6 +19,7 @@ package org.apache.lucene.codecs.bloom;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -42,6 +43,8 @@ import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
@@ -69,7 +72,7 @@ import org.apache.lucene.util.automaton.CompiledAutomaton;
  * NumFilteredFields, Filter<sup>NumFilteredFields</sup>, Footer</li>
  * <li>Filter --&gt; FieldNumber, FuzzySet</li>
  * <li>FuzzySet --&gt;See {@link FuzzySet#serialize(DataOutput)}</li>
- * <li>Header --&gt; {@link CodecUtil#writeHeader CodecHeader}</li>
+ * <li>Header --&gt; {@link CodecUtil#writeIndexHeader IndexHeader}</li>
  * <li>DelegatePostingsFormatName --&gt; {@link DataOutput#writeString(String)
  * String} The name of a ServiceProvider registered {@link PostingsFormat}</li>
  * <li>NumFilteredFields --&gt; {@link DataOutput#writeInt Uint32}</li>
@@ -82,9 +85,8 @@ import org.apache.lucene.util.automaton.CompiledAutomaton;
 public final class BloomFilteringPostingsFormat extends PostingsFormat {
   
   public static final String BLOOM_CODEC_NAME = "BloomFilter";
-  public static final int VERSION_START = 1;
-  public static final int VERSION_CHECKSUM = 2;
-  public static final int VERSION_CURRENT = VERSION_CHECKSUM;
+  public static final int VERSION_START = 3;
+  public static final int VERSION_CURRENT = VERSION_START;
   
   /** Extension of Bloom Filters file */
   static final String BLOOM_EXTENSION = "blm";
@@ -164,7 +166,7 @@ public final class BloomFilteringPostingsFormat extends PostingsFormat {
       boolean success = false;
       try {
         bloomIn = state.directory.openChecksumInput(bloomFileName, state.context);
-        int version = CodecUtil.checkHeader(bloomIn, BLOOM_CODEC_NAME, VERSION_START, VERSION_CURRENT);
+        CodecUtil.checkIndexHeader(bloomIn, BLOOM_CODEC_NAME, VERSION_START, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
         // // Load the hash function used in the BloomFilter
         // hashFunction = HashFunction.forName(bloomIn.readString());
         // Load the delegate postings format
@@ -180,11 +182,7 @@ public final class BloomFilteringPostingsFormat extends PostingsFormat {
           FieldInfo fieldInfo = state.fieldInfos.fieldInfo(fieldNum);
           bloomsByFieldName.put(fieldInfo.name, bloom);
         }
-        if (version >= VERSION_CHECKSUM) {
-          CodecUtil.checkFooter(bloomIn);
-        } else {
-          CodecUtil.checkEOF(bloomIn);
-        }
+        CodecUtil.checkFooter(bloomIn);
         IOUtils.close(bloomIn);
         success = true;
       } finally {
@@ -409,8 +407,23 @@ public final class BloomFilteringPostingsFormat extends PostingsFormat {
     }
 
     @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      List<Accountable> resources = new ArrayList<>();
+      resources.addAll(Accountables.namedAccountables("field", bloomsByFieldName));
+      if (delegateFieldsProducer != null) {
+        resources.add(Accountables.namedAccountable("delegate", delegateFieldsProducer));
+      }
+      return Collections.unmodifiableList(resources);
+    }
+
+    @Override
     public void checkIntegrity() throws IOException {
       delegateFieldsProducer.checkIntegrity();
+    }
+
+    @Override
+    public String toString() {
+      return getClass().getSimpleName() + "(fields=" + bloomsByFieldName.size() + ",delegate=" + delegateFieldsProducer + ")";
     }
   }
   
@@ -489,7 +502,7 @@ public final class BloomFilteringPostingsFormat extends PostingsFormat {
       IndexOutput bloomOutput = null;
       try {
         bloomOutput = state.directory.createOutput(bloomFileName, state.context);
-        CodecUtil.writeHeader(bloomOutput, BLOOM_CODEC_NAME, VERSION_CURRENT);
+        CodecUtil.writeIndexHeader(bloomOutput, BLOOM_CODEC_NAME, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
         // remember the name of the postings format we will delegate to
         bloomOutput.writeString(delegatePostingsFormat.getName());
         

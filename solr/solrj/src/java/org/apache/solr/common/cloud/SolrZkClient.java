@@ -41,6 +41,7 @@ import org.apache.solr.common.StringUtils;
 import org.apache.solr.common.cloud.ZkClientConnectionStrategy.ZkUpdate;
 import org.apache.solr.common.util.ExecutorUtil;
 import org.apache.solr.common.util.SolrjNamedThreadFactory;
+import org.apache.zookeeper.AsyncCallback;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.NoNodeException;
@@ -143,7 +144,7 @@ public class SolrZkClient implements Closeable {
         + zkServerAddress, this, zkServerAddress, strat, onReconnect, beforeReconnect);
 
     try {
-      strat.connect(zkServerAddress, zkClientTimeout, connManager,
+      strat.connect(zkServerAddress, zkClientTimeout, wrapWatcher(connManager),
           new ZkUpdate() {
             @Override
             public void update(SolrZooKeeper zooKeeper) {

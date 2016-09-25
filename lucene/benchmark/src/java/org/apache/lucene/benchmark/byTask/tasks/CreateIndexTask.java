@@ -17,31 +17,32 @@ package org.apache.lucene.benchmark.byTask.tasks;
  * limitations under the License.
  */
 
+import java.io.BufferedOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.text.ParseException;
+
 import org.apache.lucene.benchmark.byTask.PerfRunData;
 import org.apache.lucene.benchmark.byTask.utils.Config;
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.PostingsFormat;
-import org.apache.lucene.codecs.lucene410.Lucene410Codec;
+import org.apache.lucene.codecs.lucene50.Lucene50Codec;
 import org.apache.lucene.index.ConcurrentMergeScheduler;
 import org.apache.lucene.index.IndexCommit;
 import org.apache.lucene.index.IndexDeletionPolicy;
 import org.apache.lucene.index.IndexWriter;
-import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
+import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.LogMergePolicy;
 import org.apache.lucene.index.MergePolicy;
 import org.apache.lucene.index.MergeScheduler;
 import org.apache.lucene.index.NoDeletionPolicy;
 import org.apache.lucene.index.NoMergePolicy;
 import org.apache.lucene.index.NoMergeScheduler;
-import org.apache.lucene.util.Version;
-
-import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.PrintStream;
-import java.nio.charset.Charset;
 
 /**
  * Create an index. <br>
@@ -73,8 +74,6 @@ public class CreateIndexTask extends PerfTask {
   public CreateIndexTask(PerfRunData runData) {
     super(runData);
   }
-
-  
   
   public static IndexDeletionPolicy getIndexDeletionPolicy(Config config) {
     String deletionPolicyName = config.get("deletion.policy", "org.apache.lucene.index.KeepOnlyLastCommitDeletionPolicy");
@@ -140,7 +139,7 @@ public class CreateIndexTask extends PerfTask {
     if (defaultCodec == null && postingsFormat != null) {
       try {
         final PostingsFormat postingsFormatChosen = PostingsFormat.forName(postingsFormat);
-        iwConf.setCodec(new Lucene410Codec(){
+        iwConf.setCodec(new Lucene50Codec(){
           @Override
           public PostingsFormat getPostingsFormatForField(String field) {
             return postingsFormatChosen;
@@ -191,8 +190,8 @@ public class CreateIndexTask extends PerfTask {
       } else if (infoStreamVal.equals("SystemErr")) {
         iwc.setInfoStream(System.err);
       } else {
-        File f = new File(infoStreamVal).getAbsoluteFile();
-        iwc.setInfoStream(new PrintStream(new BufferedOutputStream(new FileOutputStream(f)), false, Charset.defaultCharset().name()));
+        Path f = Paths.get(infoStreamVal);
+        iwc.setInfoStream(new PrintStream(new BufferedOutputStream(Files.newOutputStream(f)), false, Charset.defaultCharset().name()));
       }
     }
     IndexWriter writer = new IndexWriter(runData.getDirectory(), iwc);

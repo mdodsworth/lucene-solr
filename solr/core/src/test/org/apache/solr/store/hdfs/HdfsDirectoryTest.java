@@ -29,6 +29,7 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.store.NoLockFactory;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.cloud.hdfs.HdfsTestUtil;
@@ -57,7 +58,7 @@ public class HdfsDirectoryTest extends SolrTestCaseJ4 {
 
   @BeforeClass
   public static void beforeClass() throws Exception {
-    dfsCluster = HdfsTestUtil.setupClass(createTempDir().getAbsolutePath());
+    dfsCluster = HdfsTestUtil.setupClass(createTempDir().toFile().getAbsolutePath());
   }
   
   @AfterClass
@@ -73,7 +74,7 @@ public class HdfsDirectoryTest extends SolrTestCaseJ4 {
     Configuration conf = new Configuration();
     conf.set("dfs.permissions.enabled", "false");
     
-    directory = new HdfsDirectory(new Path(dfsCluster.getURI().toString() + createTempDir().getAbsolutePath() + "/hdfs"), conf);
+    directory = new HdfsDirectory(new Path(dfsCluster.getURI().toString() + createTempDir().toFile().getAbsolutePath() + "/hdfs"), NoLockFactory.INSTANCE, conf);
     
     random = random();
   }
@@ -117,6 +118,26 @@ public class HdfsDirectoryTest extends SolrTestCaseJ4 {
     assertTrue(slowFileExists(directory, "testing.test"));
     directory.deleteFile("testing.test");
     assertFalse(slowFileExists(directory, "testing.test"));
+  }
+  
+  public void testRename() throws IOException {
+    String[] listAll = directory.listAll();
+    for (String file : listAll) {
+      directory.deleteFile(file);
+    }
+    
+    IndexOutput output = directory.createOutput("testing.test", new IOContext());
+    output.writeInt(12345);
+    output.close();
+    directory.renameFile("testing.test", "testing.test.renamed");
+    assertFalse(slowFileExists(directory, "testing.test"));
+    assertTrue(slowFileExists(directory, "testing.test.renamed"));
+    IndexInput input = directory.openInput("testing.test.renamed", new IOContext());
+    assertEquals(12345, input.readInt());
+    assertEquals(input.getFilePointer(), input.length());
+    input.close();
+    directory.deleteFile("testing.test.renamed");
+    assertFalse(slowFileExists(directory, "testing.test.renamed"));
   }
   
   @Test

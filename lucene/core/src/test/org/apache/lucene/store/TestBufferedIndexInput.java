@@ -17,12 +17,9 @@ package org.apache.lucene.store;
  * limitations under the License.
  */
 
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 import java.util.Random;
 
@@ -33,32 +30,17 @@ import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
-import org.apache.lucene.index.Term;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
+import org.apache.lucene.index.Term;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.TermQuery;
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.ArrayUtil;
+import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.LuceneTestCase;
 
 public class TestBufferedIndexInput extends LuceneTestCase {
   
-  private static void writeBytes(File aFile, long size) throws IOException{
-    OutputStream stream = null;
-    try {
-      stream = new FileOutputStream(aFile);
-      for (int i = 0; i < size; i++) {
-        stream.write(byten(i));  
-      }
-      stream.flush();
-    } finally {
-      if (stream != null) {
-        stream.close();
-      }
-    }
-  }
-
   private static final long TEST_FILE_LENGTH = 100*1024;
  
   // Call readByte() repeatedly, past the buffer boundary, and see that it
@@ -227,7 +209,7 @@ public class TestBufferedIndexInput extends LuceneTestCase {
     }
 
     public void testSetBufferSize() throws IOException {
-      File indexDir = createTempDir("testSetBufferSize");
+      Path indexDir = createTempDir("testSetBufferSize");
       MockFSDirectory dir = new MockFSDirectory(indexDir, random());
       try {
         IndexWriter writer = new IndexWriter(
@@ -279,22 +261,18 @@ public class TestBufferedIndexInput extends LuceneTestCase {
         writer.close();
         reader.close();
       } finally {
-        TestUtil.rm(indexDir);
+        IOUtils.rm(indexDir);
       }
     }
 
-    private static class MockFSDirectory extends BaseDirectory {
+    private static class MockFSDirectory extends FilterDirectory {
 
-      List<IndexInput> allIndexInputs = new ArrayList<>();
+      final List<IndexInput> allIndexInputs = new ArrayList<>();
+      final Random rand;
 
-      Random rand;
-
-      private Directory dir;
-
-      public MockFSDirectory(File path, Random rand) throws IOException {
+      public MockFSDirectory(Path path, Random rand) throws IOException {
+        super(new SimpleFSDirectory(path));
         this.rand = rand;
-        lockFactory = NoLockFactory.getNoLockFactory();
-        dir = new SimpleFSDirectory(path, null);
       }
 
       public void tweakBufferSizes() {
@@ -312,40 +290,9 @@ public class TestBufferedIndexInput extends LuceneTestCase {
       public IndexInput openInput(String name, IOContext context) throws IOException {
         // Make random changes to buffer size
         //bufferSize = 1+Math.abs(rand.nextInt() % 10);
-        IndexInput f = dir.openInput(name, context);
+        IndexInput f = super.openInput(name, context);
         allIndexInputs.add(f);
         return f;
-      }
-
-      @Override
-      public IndexOutput createOutput(String name, IOContext context) throws IOException {
-        return dir.createOutput(name, context);
-      }
-
-      @Override
-      public void close() throws IOException {
-        dir.close();
-      }
-
-      @Override
-      public void deleteFile(String name)
-        throws IOException
-      {
-        dir.deleteFile(name);
-      }
-      @Override
-      public String[] listAll()
-        throws IOException
-      {
-        return dir.listAll();
-      }
-      @Override
-      public void sync(Collection<String> names) throws IOException {
-        dir.sync(names);
-      }
-      @Override
-      public long fileLength(String name) throws IOException {
-        return dir.fileLength(name);
       }
     }
 }

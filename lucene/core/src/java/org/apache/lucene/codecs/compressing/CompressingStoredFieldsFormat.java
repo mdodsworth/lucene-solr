@@ -23,7 +23,6 @@ import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.codecs.StoredFieldsFormat;
 import org.apache.lucene.codecs.StoredFieldsReader;
 import org.apache.lucene.codecs.StoredFieldsWriter;
-import org.apache.lucene.codecs.lucene40.Lucene40StoredFieldsFormat;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.MergePolicy;
 import org.apache.lucene.index.SegmentInfo;
@@ -32,14 +31,12 @@ import org.apache.lucene.store.IOContext;
 
 
 /**
- * A {@link StoredFieldsFormat} that is very similar to
- * {@link Lucene40StoredFieldsFormat} but compresses documents in chunks in
+ * A {@link StoredFieldsFormat} that compresses documents in chunks in
  * order to improve the compression ratio.
  * <p>
  * For a chunk size of <tt>chunkSize</tt> bytes, this {@link StoredFieldsFormat}
  * does not support documents larger than (<tt>2<sup>31</sup> - chunkSize</tt>)
- * bytes. In case this is a problem, you should use another format, such as
- * {@link Lucene40StoredFieldsFormat}.
+ * bytes.
  * <p>
  * For optimal performance, you should use a {@link MergePolicy} that returns
  * segments that have the biggest byte size first.
@@ -67,7 +64,7 @@ public class CompressingStoredFieldsFormat extends StoredFieldsFormat {
    * <p>
    * <code>formatName</code> is the name of the format. This name will be used
    * in the file formats to perform
-   * {@link CodecUtil#checkHeader(org.apache.lucene.store.DataInput, String, int, int) codec header checks}.
+   * {@link CodecUtil#checkIndexHeader codec header checks}.
    * <p>
    * <code>segmentSuffix</code> is the segment suffix. This suffix is added to 
    * the result file name only if it's not the empty string.
@@ -81,8 +78,6 @@ public class CompressingStoredFieldsFormat extends StoredFieldsFormat {
    * <p>
    * <code>chunkSize</code> is the minimum byte size of a chunk of documents.
    * A value of <code>1</code> can make sense if there is redundancy across
-   * fields. In that case, both performance and compression ratio should be
-   * better than with {@link Lucene40StoredFieldsFormat} with compressed
    * fields.
    * <p>
    * Higher values of <code>chunkSize</code> should improve the compression

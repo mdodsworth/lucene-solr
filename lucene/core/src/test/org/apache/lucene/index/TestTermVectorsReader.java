@@ -129,7 +129,7 @@ public class TestTermVectorsReader extends LuceneTestCase {
     seg = writer.newestSegment();
     writer.close();
 
-    fieldInfos = SegmentReader.readFieldInfos(seg);
+    fieldInfos = IndexWriter.readFieldInfos(seg);
   }
   
   @Override
@@ -187,7 +187,7 @@ public class TestTermVectorsReader extends LuceneTestCase {
   public void test() throws IOException {
     //Check to see the files were created properly in setup
     DirectoryReader reader = DirectoryReader.open(dir);
-    for (AtomicReaderContext ctx : reader.leaves()) {
+    for (LeafReaderContext ctx : reader.leaves()) {
       SegmentReader sr = (SegmentReader) ctx.reader();
       assertTrue(sr.getFieldInfos().hasVectors());
     }

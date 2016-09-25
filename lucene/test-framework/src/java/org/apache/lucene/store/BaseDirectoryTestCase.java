@@ -18,10 +18,11 @@ package org.apache.lucene.store;
  */
 
 import java.io.EOFException;
-import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -41,7 +42,7 @@ public abstract class BaseDirectoryTestCase extends LuceneTestCase {
   /** Subclass returns the Directory to be tested; if it's
    *  an FS-based directory it should point to the specified
    *  path, else it can ignore it. */
-  protected abstract Directory getDirectory(File path) throws IOException;
+  protected abstract Directory getDirectory(Path path) throws IOException;
   
   // first some basic tests for the directory api
   
@@ -93,6 +94,29 @@ public abstract class BaseDirectoryTestCase extends LuceneTestCase {
     assertArrayEquals(bytes, bytes2);
     
     IOUtils.close(source, dest);
+  }
+  
+  public void testRename() throws Exception {
+    Directory dir = getDirectory(createTempDir("testRename"));
+    
+    IndexOutput output = dir.createOutput("foobar", newIOContext(random()));
+    int numBytes = random().nextInt(20000);
+    byte bytes[] = new byte[numBytes];
+    random().nextBytes(bytes);
+    output.writeBytes(bytes, bytes.length);
+    output.close();
+    
+    dir.renameFile("foobar", "foobaz");
+    
+    IndexInput input = dir.openInput("foobaz", newIOContext(random()));
+    byte bytes2[] = new byte[numBytes];
+    input.readBytes(bytes2, 0, bytes2.length);
+    assertEquals(input.length(), numBytes);
+    input.close();
+    
+    assertArrayEquals(bytes, bytes2);
+    
+    dir.close();
   }
   
   // TODO: are these semantics really needed by lucene? can we just throw exception?
@@ -449,17 +473,6 @@ public abstract class BaseDirectoryTestCase extends LuceneTestCase {
     dir.close();
   }
 
-  /** LUCENE-1464: just creating a Directory should not
-   *  mkdir the underling directory in the filesystem. */
-  public void testDontCreate() throws Throwable {
-    File path = createTempDir("doesnotexist");
-    TestUtil.rm(path);
-    assertTrue(!path.exists());
-    Directory dir = getDirectory(path);
-    assertTrue(!path.exists());
-    dir.close();
-  }
-
   /** LUCENE-1468: once we create an output, we should see
    *  it in the dir listing and be able to open it with
    *  openInput. */
@@ -558,49 +571,16 @@ public abstract class BaseDirectoryTestCase extends LuceneTestCase {
   
   // LUCENE-3382 -- make sure we get exception if the directory really does not exist.
   public void testNoDir() throws Throwable {
-    File tempDir = createTempDir("doesnotexist");
-    TestUtil.rm(tempDir);
+    Path tempDir = createTempDir("doesnotexist");
+    IOUtils.rm(tempDir);
     Directory dir = getDirectory(tempDir);
     try {
       DirectoryReader.open(dir);
       fail("did not hit expected exception");
-    } catch (NoSuchDirectoryException | IndexNotFoundException nsde) {
+    } catch (NoSuchFileException | IndexNotFoundException nsde) {
       // expected
     }
     dir.close();
-  }
-
-  // LUCENE-3382 test that delegate compound files correctly.
-  public void testCompoundFileAppendTwice() throws IOException {
-    Directory newDir = getDirectory(createTempDir("testCompoundFileAppendTwice"));
-    CompoundFileDirectory csw = new CompoundFileDirectory(newDir, "d.cfs", newIOContext(random()), true);
-    createSequenceFile(newDir, "d1", (byte) 0, 15);
-    IndexOutput out = csw.createOutput("d.xyz", newIOContext(random()));
-    out.writeInt(0);
-    out.close();
-    assertEquals(1, csw.listAll().length);
-    assertEquals("d.xyz", csw.listAll()[0]);
-   
-    csw.close();
-
-    CompoundFileDirectory cfr = new CompoundFileDirectory(newDir, "d.cfs", newIOContext(random()), false);
-    assertEquals(1, cfr.listAll().length);
-    assertEquals("d.xyz", cfr.listAll()[0]);
-    cfr.close();
-    newDir.close();
-  }
-
-  /** Creates a file of the specified size with sequential data. The first
-   *  byte is written as the start byte provided. All subsequent bytes are
-   *  computed as start + offset where offset is the number of the byte.
-   */
-  private void createSequenceFile(Directory dir, String name, byte start, int size) throws IOException {
-    IndexOutput os = dir.createOutput(name, newIOContext(random()));
-    for (int i=0; i < size; i++) {
-      os.writeByte(start);
-      start ++;
-    }
-    os.close();
   }
 
   public void testCopyBytes() throws Exception {
@@ -750,7 +730,7 @@ public abstract class BaseDirectoryTestCase extends LuceneTestCase {
   // this test backdoors the directory via the filesystem. so it must actually use the filesystem
   // TODO: somehow change this test to 
   public void testFsyncDoesntCreateNewFiles() throws Exception {
-    File path = createTempDir("nocreate");
+    Path path = createTempDir("nocreate");
     Directory fsdir = getDirectory(path);
     
     // this test backdoors the directory via the filesystem. so it must be an FSDir (for now)
@@ -767,7 +747,7 @@ public abstract class BaseDirectoryTestCase extends LuceneTestCase {
     out.close();
     
     // delete it
-    assertTrue(new File(path, "afile").delete());
+    Files.delete(path.resolve("afile"));
     
     // directory is empty
     assertEquals(0, fsdir.listAll().length);
@@ -1025,6 +1005,30 @@ public abstract class BaseDirectoryTestCase extends LuceneTestCase {
     }
     
     input.close();
+    dir.close();
+  }
+  
+  /** 
+   * This test that writes larger than the size of the buffer output
+   * will correctly increment the file pointer.
+   */
+  public void testLargeWrites() throws IOException {
+    Directory dir = getDirectory(createTempDir("largeWrites"));
+    IndexOutput os = dir.createOutput("testBufferStart.txt", newIOContext(random()));
+    
+    byte[] largeBuf = new byte[2048];
+    for (int i=0; i<largeBuf.length; i++) {
+      largeBuf[i] = (byte) (Math.random() * 256);
+    }
+    
+    long currentPos = os.getFilePointer();
+    os.writeBytes(largeBuf, largeBuf.length);
+    
+    try {
+      assertEquals(currentPos + largeBuf.length, os.getFilePointer());
+    } finally {
+      os.close();
+    }
     dir.close();
   }
 }

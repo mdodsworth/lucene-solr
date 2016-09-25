@@ -1,6 +1,7 @@
 package org.apache.solr.handler.dataimport;
 
 import java.io.File;
+import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -54,13 +55,13 @@ public abstract class AbstractSqlEntityProcessorTestCase extends
   
   @Before
   public void beforeSqlEntitiyProcessorTestCase() throws Exception {
-    File tmpdir = createTempDir();
+    File tmpdir = createTempDir().toFile();
     fileLocation = tmpdir.getPath();
     fileName = "the.properties";
   } 
   
   @After
-  public void afterSqlEntitiyProcessorTestCase() {
+  public void afterSqlEntitiyProcessorTestCase() throws Exception {
     useSimpleCaches = false;
     countryEntity = false;
     countryCached = false;
@@ -74,8 +75,8 @@ public abstract class AbstractSqlEntityProcessorTestCase extends
     //If an Assume was tripped while setting up the test, 
     //the file might not ever have been created...
     if(fileLocation!=null) {
-      new File(fileLocation + File.separatorChar + fileName).delete();
-      new File(fileLocation).delete();
+      Files.deleteIfExists(new File(fileLocation + File.separatorChar + fileName).toPath());
+      Files.deleteIfExists(new File(fileLocation).toPath());
     }
   }
   

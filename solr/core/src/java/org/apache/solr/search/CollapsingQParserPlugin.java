@@ -22,8 +22,8 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.Map;
 
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.DocValues;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.queries.function.FunctionQuery;
@@ -33,6 +33,7 @@ import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Scorer;
+import org.apache.lucene.util.BitSetIterator;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.solr.common.SolrException;
@@ -49,8 +50,8 @@ import org.apache.solr.schema.TrieIntField;
 import org.apache.solr.schema.TrieLongField;
 
 import com.carrotsearch.hppc.FloatArrayList;
-import com.carrotsearch.hppc.IntOpenHashSet;
 import com.carrotsearch.hppc.IntIntOpenHashMap;
+import com.carrotsearch.hppc.IntOpenHashSet;
 import com.carrotsearch.hppc.cursors.IntIntCursor;
 
 /**
@@ -222,7 +223,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
 
         SortedDocValues docValues = null;
         FunctionQuery funcQuery = null;
-        docValues = DocValues.getSorted(searcher.getAtomicReader(), this.field);
+        docValues = DocValues.getSorted(searcher.getLeafReader(), this.field);
 
         FieldType fieldType = null;
 
@@ -373,7 +374,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
 
   private class CollapsingScoreCollector extends DelegatingCollector {
 
-    private AtomicReaderContext[] contexts;
+    private LeafReaderContext[] contexts;
     private FixedBitSet collapsedSet;
     private SortedDocValues values;
     private int[] ords;
@@ -392,7 +393,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
                                     int nullPolicy,
                                     IntIntOpenHashMap boostDocs) {
       this.maxDoc = maxDoc;
-      this.contexts = new AtomicReaderContext[segments];
+      this.contexts = new LeafReaderContext[segments];
       this.collapsedSet = new FixedBitSet(maxDoc);
       this.boostDocs = boostDocs;
       if(this.boostDocs != null) {
@@ -430,7 +431,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
     }
 
     @Override
-    protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+    protected void doSetNextReader(LeafReaderContext context) throws IOException {
       this.contexts[context.ord] = context;
       this.docBase = context.docBase;
     }
@@ -490,7 +491,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
       leafDelegate = delegate.getLeafCollector(contexts[currentContext]);
       DummyScorer dummy = new DummyScorer();
       leafDelegate.setScorer(dummy);
-      DocIdSetIterator it = collapsedSet.iterator();
+      DocIdSetIterator it = new BitSetIterator(collapsedSet, 0L); // cost is not useful here
       int docId = -1;
       int nullScoreIndex = 0;
       while((docId = it.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
@@ -528,7 +529,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
   }
 
   private class CollapsingFieldValueCollector extends DelegatingCollector {
-    private AtomicReaderContext[] contexts;
+    private LeafReaderContext[] contexts;
     private SortedDocValues values;
 
     private int maxDoc;
@@ -550,7 +551,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
                                          FunctionQuery funcQuery, IndexSearcher searcher) throws IOException{
 
       this.maxDoc = maxDoc;
-      this.contexts = new AtomicReaderContext[segments];
+      this.contexts = new LeafReaderContext[segments];
       this.values = values;
       int valueCount = values.getValueCount();
       this.nullPolicy = nullPolicy;
@@ -580,7 +581,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
       this.fieldValueCollapse.setScorer(scorer);
     }
 
-    public void doSetNextReader(AtomicReaderContext context) throws IOException {
+    public void doSetNextReader(LeafReaderContext context) throws IOException {
       this.contexts[context.ord] = context;
       this.docBase = context.docBase;
       this.fieldValueCollapse.setNextReader(context);
@@ -603,7 +604,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
       leafDelegate = delegate.getLeafCollector(contexts[currentContext]);
       DummyScorer dummy = new DummyScorer();
       leafDelegate.setScorer(dummy);
-      DocIdSetIterator it = fieldValueCollapse.getCollapsedSet().iterator();
+      DocIdSetIterator it = new BitSetIterator(fieldValueCollapse.getCollapsedSet(), 0); // cost is not useful here
       int docId = -1;
       int nullScoreIndex = 0;
       float[] scores = fieldValueCollapse.getScores();
@@ -660,7 +661,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
     protected String field;
 
     public abstract void collapse(int ord, int contextDoc, int globalDoc) throws IOException;
-    public abstract void setNextReader(AtomicReaderContext context) throws IOException;
+    public abstract void setNextReader(LeafReaderContext context) throws IOException;
 
     public FieldValueCollapse(int maxDoc,
                               String field,
@@ -766,7 +767,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
       }
     }
 
-    public void setNextReader(AtomicReaderContext context) throws IOException {
+    public void setNextReader(LeafReaderContext context) throws IOException {
       this.vals = DocValues.getNumeric(context.reader(), this.field);
     }
 
@@ -834,7 +835,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
       }
     }
 
-    public void setNextReader(AtomicReaderContext context) throws IOException {
+    public void setNextReader(LeafReaderContext context) throws IOException {
       this.vals = DocValues.getNumeric(context.reader(), this.field);
     }
 
@@ -903,7 +904,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
       }
     }
 
-    public void setNextReader(AtomicReaderContext context) throws IOException {
+    public void setNextReader(LeafReaderContext context) throws IOException {
       this.vals = DocValues.getNumeric(context.reader(), this.field);
     }
 
@@ -985,7 +986,7 @@ public class CollapsingQParserPlugin extends QParserPlugin {
       }
     }
 
-    public void setNextReader(AtomicReaderContext context) throws IOException {
+    public void setNextReader(LeafReaderContext context) throws IOException {
       functionValues = this.valueSource.getValues(rcontext, context);
     }
 

@@ -21,7 +21,6 @@ import org.apache.lucene.queries.function.FunctionValues;
 import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.queries.function.docvalues.FloatDocValues;
 import org.apache.lucene.search.DocIdSetIterator;
-import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.handler.RequestHandlerBase;
@@ -78,7 +77,7 @@ public class FileFloatSource extends ValueSource {
   }
 
   @Override
-  public FunctionValues getValues(Map context, AtomicReaderContext readerContext) throws IOException {
+  public FunctionValues getValues(Map context, LeafReaderContext readerContext) throws IOException {
     final int off = readerContext.docBase;
     IndexReaderContext topLevelContext = ReaderUtil.getTopLevelContext(readerContext);
 
@@ -133,9 +132,9 @@ public class FileFloatSource extends ValueSource {
    * @param reader the IndexReader whose cache needs refreshing
    */
   public void refreshCache(IndexReader reader) {
-    log.info("Refreshing FlaxFileFloatSource cache for field {}", this.field.getName());
+    log.info("Refreshing FileFloatSource cache for field {}", this.field.getName());
     floatCache.refresh(reader, new Entry(this));
-    log.info("FlaxFileFloatSource cache for field {} reloaded", this.field.getName());
+    log.info("FileFloatSource cache for field {} reloaded", this.field.getName());
   }
 
   private final float[] getCachedFloats(IndexReader reader) {

@@ -1,22 +1,22 @@
 package org.apache.lucene.search;
 
-import org.apache.lucene.document.Field;
-import org.apache.lucene.util.Bits;
-import org.apache.lucene.util.DocIdBitSet;
-import org.apache.lucene.util.LuceneTestCase;
-
-import java.util.BitSet;
 import java.io.IOException;
+import java.util.BitSet;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.analysis.MockAnalyzer;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.document.Field;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
-import org.apache.lucene.index.Term;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.document.Document;
+import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.BitDocIdSet;
+import org.apache.lucene.util.FixedBitSet;
+import org.apache.lucene.util.LuceneTestCase;
 
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
@@ -38,7 +38,7 @@ import org.apache.lucene.document.Document;
 public class TestScorerPerf extends LuceneTestCase {
   boolean validate = true;  // set to false when doing performance testing
 
-  BitSet[] sets;
+  FixedBitSet[] sets;
   Term[] terms;
   IndexSearcher s;
   IndexReader r;
@@ -81,16 +81,16 @@ public class TestScorerPerf extends LuceneTestCase {
   }
 
 
-  public BitSet randBitSet(int sz, int numBitsToSet) {
-    BitSet set = new BitSet(sz);
+  public FixedBitSet randBitSet(int sz, int numBitsToSet) {
+    FixedBitSet set = new FixedBitSet(sz);
     for (int i=0; i<numBitsToSet; i++) {
       set.set(random().nextInt(sz));
     }
     return set;
   }
 
-  public BitSet[] randBitSets(int numSets, int setSize) {
-    BitSet[] sets = new BitSet[numSets];
+  public FixedBitSet[] randBitSets(int numSets, int setSize) {
+    FixedBitSet[] sets = new FixedBitSet[numSets];
     for (int i=0; i<sets.length; i++) {
       sets[i] = randBitSet(setSize, random().nextInt(setSize));
     }
@@ -112,7 +112,7 @@ public class TestScorerPerf extends LuceneTestCase {
     public int getSum() { return sum; }
 
     @Override
-    protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+    protected void doSetNextReader(LeafReaderContext context) throws IOException {
       docBase = context.docBase;
     }
     @Override
@@ -123,9 +123,9 @@ public class TestScorerPerf extends LuceneTestCase {
 
 
   public static class MatchingHitCollector extends CountingHitCollector {
-    BitSet answer;
+    FixedBitSet answer;
     int pos=-1;
-    public MatchingHitCollector(BitSet answer) {
+    public MatchingHitCollector(FixedBitSet answer) {
       this.answer = answer;
     }
 
@@ -140,18 +140,18 @@ public class TestScorerPerf extends LuceneTestCase {
   }
 
 
-  BitSet addClause(BooleanQuery bq, BitSet result) {
-    final BitSet rnd = sets[random().nextInt(sets.length)];
+  FixedBitSet addClause(BooleanQuery bq, FixedBitSet result) {
+    final FixedBitSet rnd = sets[random().nextInt(sets.length)];
     Query q = new ConstantScoreQuery(new Filter() {
       @Override
-      public DocIdSet getDocIdSet (AtomicReaderContext context, Bits acceptDocs) {
+      public DocIdSet getDocIdSet (LeafReaderContext context, Bits acceptDocs) {
         assertNull("acceptDocs should be null, as we have an index without deletions", acceptDocs);
-        return new DocIdBitSet(rnd);
+        return new BitDocIdSet(rnd);
       }
     });
     bq.add(q, BooleanClause.Occur.MUST);
     if (validate) {
-      if (result==null) result = (BitSet)rnd.clone();
+      if (result==null) result = rnd.clone();
       else result.and(rnd);
     }
     return result;
@@ -164,7 +164,7 @@ public class TestScorerPerf extends LuceneTestCase {
     for (int i=0; i<iter; i++) {
       int nClauses = random().nextInt(maxClauses-1)+2; // min 2 clauses
       BooleanQuery bq = new BooleanQuery();
-      BitSet result=null;
+      FixedBitSet result=null;
       for (int j=0; j<nClauses; j++) {
         result = addClause(bq,result);
       }
@@ -188,7 +188,7 @@ public class TestScorerPerf extends LuceneTestCase {
     for (int i=0; i<iter; i++) {
       int oClauses = random().nextInt(maxOuterClauses-1)+2;
       BooleanQuery oq = new BooleanQuery();
-      BitSet result=null;
+      FixedBitSet result=null;
 
       for (int o=0; o<oClauses; o++) {
 

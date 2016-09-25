@@ -22,18 +22,19 @@ import java.io.IOException;
 import org.apache.lucene.codecs.NormsConsumer;
 import org.apache.lucene.codecs.NormsFormat;
 import org.apache.lucene.codecs.NormsProducer;
-import org.apache.lucene.codecs.lucene49.Lucene49NormsFormat;
-import org.apache.lucene.index.AssertingAtomicReader;
+import org.apache.lucene.index.AssertingLeafReader;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.TestUtil;
 
 /**
- * Just like {@link Lucene49NormsFormat} but with additional asserts.
+ * Just like the default but with additional asserts.
  */
 public class AssertingNormsFormat extends NormsFormat {
-  private final NormsFormat in = new Lucene49NormsFormat();
+  private final NormsFormat in = TestUtil.getDefaultCodec().normsFormat();
   
   @Override
   public NormsConsumer normsConsumer(SegmentWriteState state) throws IOException {
@@ -67,7 +68,7 @@ public class AssertingNormsFormat extends NormsFormat {
         count++;
       }
       assert count == maxDoc;
-      AssertingDocValuesFormat.checkIterator(values.iterator(), maxDoc, false);
+      TestUtil.checkIterator(values.iterator(), maxDoc, false);
       in.addNormsField(field, values);
     }
     
@@ -84,14 +85,18 @@ public class AssertingNormsFormat extends NormsFormat {
     AssertingNormsProducer(NormsProducer in, int maxDoc) {
       this.in = in;
       this.maxDoc = maxDoc;
+      // do a few simple checks on init
+      assert toString() != null;
+      assert ramBytesUsed() >= 0;
+      assert getChildResources() != null;
     }
 
     @Override
     public NumericDocValues getNorms(FieldInfo field) throws IOException {
-      assert field.getNormType() == FieldInfo.DocValuesType.NUMERIC;
+      assert field.hasNorms();
       NumericDocValues values = in.getNorms(field);
       assert values != null;
-      return new AssertingAtomicReader.AssertingNumericDocValues(values, maxDoc);
+      return new AssertingLeafReader.AssertingNumericDocValues(values, maxDoc);
     }
 
     @Override
@@ -101,12 +106,31 @@ public class AssertingNormsFormat extends NormsFormat {
 
     @Override
     public long ramBytesUsed() {
-      return in.ramBytesUsed();
+      long v = in.ramBytesUsed();
+      assert v >= 0;
+      return v;
+    }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      Iterable<? extends Accountable> res = in.getChildResources();
+      TestUtil.checkIterator(res.iterator());
+      return res;
     }
 
     @Override
     public void checkIntegrity() throws IOException {
       in.checkIntegrity();
+    }
+    
+    @Override
+    public NormsProducer getMergeInstance() throws IOException {
+      return new AssertingNormsProducer(in.getMergeInstance(), maxDoc);
+    }
+    
+    @Override
+    public String toString() {
+      return getClass().getSimpleName() + "(" + in.toString() + ")";
     }
   }
 }

@@ -53,6 +53,10 @@ public class JmxMonitoredMap<K, V> extends
   private static final Logger LOG = LoggerFactory.getLogger(JmxMonitoredMap.class
           .getName());
 
+  // set to true to use cached statistics NamedLists between getMBeanInfo calls to work
+  // around over calling getStatistics on MBeanInfos when iterating over all attributes (SOLR-6586)
+  private boolean useCachedStatsBetweenGetMBeanInfoCalls = Boolean.getBoolean("useCachedStatsBetweenGetMBeanInfoCalls");
+  
   private MBeanServer server = null;
 
   private String jmxRootName;
@@ -112,8 +116,16 @@ public class JmxMonitoredMap<K, V> extends
   @Override
   public void clear() {
     if (server != null) {
-      for (Map.Entry<String, SolrInfoMBean> entry : entrySet()) {
-        unregister(entry.getKey(), entry.getValue());
+      QueryExp exp = Query.eq(Query.attr("coreHashCode"), Query.value(coreHashCode));
+      Set<ObjectName> objectNames = server.queryNames(null, exp);
+      if (objectNames != null)  {
+        for (ObjectName name : objectNames) {
+          try {
+            server.unregisterMBean(name);
+          } catch (Exception e) {
+            LOG.error("Exception un-registering mbean {}", name, e);
+          }
+        }
       }
     }
 
@@ -136,7 +148,7 @@ public class JmxMonitoredMap<K, V> extends
         ObjectName name = getObjectName(key, infoBean);
         if (server.isRegistered(name))
           server.unregisterMBean(name);
-        SolrDynamicMBean mbean = new SolrDynamicMBean(coreHashCode, infoBean);
+        SolrDynamicMBean mbean = new SolrDynamicMBean(coreHashCode, infoBean, useCachedStatsBetweenGetMBeanInfoCalls);
         server.registerMBean(mbean, name);
       } catch (Exception e) {
         LOG.warn( "Failed to register info bean: " + key, e);
@@ -205,8 +217,17 @@ public class JmxMonitoredMap<K, V> extends
     private HashSet<String> staticStats;
 
     private String coreHashCode;
-
+    
+    private volatile NamedList cachedDynamicStats;
+    
+    private boolean useCachedStatsBetweenGetMBeanInfoCalls;
+    
     public SolrDynamicMBean(String coreHashCode, SolrInfoMBean managedResource) {
+      this(coreHashCode, managedResource, false);
+    }
+
+    public SolrDynamicMBean(String coreHashCode, SolrInfoMBean managedResource, boolean useCachedStatsBetweenGetMBeanInfoCalls) {
+      this.useCachedStatsBetweenGetMBeanInfoCalls = useCachedStatsBetweenGetMBeanInfoCalls;
       this.infoBean = managedResource;
       staticStats = new HashSet<>();
 
@@ -234,6 +255,11 @@ public class JmxMonitoredMap<K, V> extends
 
       try {
         NamedList dynamicStats = infoBean.getStatistics();
+        
+        if (useCachedStatsBetweenGetMBeanInfoCalls) {
+          cachedDynamicStats = dynamicStats;
+        }
+        
         if (dynamicStats != null) {
           for (int i = 0; i < dynamicStats.size(); i++) {
             String name = dynamicStats.getName(i);
@@ -295,8 +321,17 @@ public class JmxMonitoredMap<K, V> extends
           throw new AttributeNotFoundException(attribute);
         }
       } else {
-        NamedList list = infoBean.getStatistics();
-        val = list.get(attribute);
+        NamedList stats = null;
+        if (useCachedStatsBetweenGetMBeanInfoCalls) {
+          NamedList cachedStats = this.cachedDynamicStats;
+          if (cachedStats != null) {
+            stats = cachedStats;
+          }
+        }
+        if (stats == null) {
+          stats = infoBean.getStatistics();
+        }
+        val = stats.get(attribute);
       }
 
       if (val != null) {

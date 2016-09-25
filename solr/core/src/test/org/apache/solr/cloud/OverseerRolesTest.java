@@ -106,7 +106,7 @@ public class OverseerRolesTest  extends AbstractFullDistribZkTestBase{
     Map m = (Map) ZkStateReader.fromJSON(data);
     String s = (String) m.get("id");
     String leader = LeaderElector.getNodeName(s);
-    Overseer.getInQueue(zk).offer(ZkStateReader.toJSON(new ZkNodeProps(Overseer.QUEUE_OPERATION, Overseer.QUIT)));
+    Overseer.getInQueue(zk).offer(ZkStateReader.toJSON(new ZkNodeProps(Overseer.QUEUE_OPERATION, Overseer.OverseerAction.QUIT.toLower())));
     long timeout = System.currentTimeMillis()+10000;
     String newLeader=null;
     for(;System.currentTimeMillis() < timeout;){
@@ -137,7 +137,7 @@ public class OverseerRolesTest  extends AbstractFullDistribZkTestBase{
     log.info("Current leader {} ", currentLeader);
     l.remove(currentLeader);
 
-    Collections.shuffle(l);
+    Collections.shuffle(l, random());
     String overseerDesignate = l.get(0);
     log.info("overseerDesignate {}",overseerDesignate);
     setOverseerRole(CollectionAction.ADDROLE,overseerDesignate);
@@ -165,7 +165,7 @@ public class OverseerRolesTest  extends AbstractFullDistribZkTestBase{
 
     l.remove(overseerDesignate);
 
-    Collections.shuffle(l);
+    Collections.shuffle(l, random());
 
     String anotherOverseer = l.get(0);
     log.info("Adding another overseer designate {}", anotherOverseer);
@@ -197,7 +197,9 @@ public class OverseerRolesTest  extends AbstractFullDistribZkTestBase{
     assertNotNull("Could not find a jetty2 kill",  leaderJetty);
 
     log.info("leader node {}", leaderJetty.getBaseUrl());
-    log.info ("current election Queue", OverseerCollectionProcessor.getSortedElectionNodes(client.getZkStateReader().getZkClient()));
+    log.info ("current election Queue",
+        OverseerCollectionProcessor.getSortedElectionNodes(client.getZkStateReader().getZkClient(),
+            OverseerElectionContext.PATH + LeaderElector.ELECTION_NODE));
     ChaosMonkey.stop(leaderJetty);
     timeout = System.currentTimeMillis() + 10000;
     leaderchanged = false;

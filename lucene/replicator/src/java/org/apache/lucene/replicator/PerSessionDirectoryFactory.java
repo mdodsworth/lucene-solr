@@ -17,12 +17,14 @@ package org.apache.lucene.replicator;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import org.apache.lucene.replicator.ReplicationClient.SourceDirectoryFactory;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.util.IOUtils;
 
 /**
  * A {@link SourceDirectoryFactory} which returns {@link FSDirectory} under a
@@ -33,36 +35,19 @@ import org.apache.lucene.store.FSDirectory;
  */
 public class PerSessionDirectoryFactory implements SourceDirectoryFactory {
   
-  private final File workDir;
+  private final Path workDir;
   
   /** Constructor with the given sources mapping. */
-  public PerSessionDirectoryFactory(File workDir) {
+  public PerSessionDirectoryFactory(Path workDir) {
     this.workDir = workDir;
-  }
-  
-  private void rm(File file) throws IOException {
-    if (file.isDirectory()) {
-      for (File f : file.listFiles()) {
-        rm(f);
-      }
-    }
-    
-    // This should be either an empty directory, or a file
-    if (!file.delete() && file.exists()) {
-      throw new IOException("failed to delete " + file);
-    }
   }
   
   @Override
   public Directory getDirectory(String sessionID, String source) throws IOException {
-    File sessionDir = new File(workDir, sessionID);
-    if (!sessionDir.exists() && !sessionDir.mkdirs()) {
-      throw new IOException("failed to create session directory " + sessionDir);
-    }
-    File sourceDir = new File(sessionDir, source);
-    if (!sourceDir.mkdirs()) {
-      throw new IOException("failed to create source directory " + sourceDir);
-    }
+    Path sessionDir = workDir.resolve(sessionID);
+    Files.createDirectories(sessionDir);
+    Path sourceDir = sessionDir.resolve(source);
+    Files.createDirectories(sourceDir);
     return FSDirectory.open(sourceDir);
   }
   
@@ -71,7 +56,7 @@ public class PerSessionDirectoryFactory implements SourceDirectoryFactory {
     if (sessionID.isEmpty()) { // protect against deleting workDir entirely!
       throw new IllegalArgumentException("sessionID cannot be empty");
     }
-    rm(new File(workDir, sessionID));
+    IOUtils.rm(workDir.resolve(sessionID));
   }
   
 }

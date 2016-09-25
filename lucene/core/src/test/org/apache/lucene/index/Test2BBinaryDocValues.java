@@ -28,16 +28,19 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.LuceneTestCase.Monster;
 import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.TimeUnits;
 
 import com.carrotsearch.randomizedtesting.annotations.TimeoutSuite;
 
 @SuppressCodecs({"SimpleText", "Memory", "Direct"})
-@TimeoutSuite(millis = 80 * TimeUnits.HOUR)
-@Monster("takes ~ 45 minutes")
+@TimeoutSuite(millis = 80 * TimeUnits.HOUR) // effectively no limit
+// The six hour time was achieved on a Linux 3.13 system with these specs:
+// 3-core AMD at 2.5Ghz, 12 GB RAM, 5GB test heap, 2 test JVMs, 2TB SATA.
+@Monster("takes ~ 6 hours if the heap is 5gb")
 public class Test2BBinaryDocValues extends LuceneTestCase {
   
-  // indexes Integer.MAX_VALUE docs with a fixed binary field
+  // indexes IndexWriter.MAX_DOCS docs with a fixed binary field
   public void testFixedBinary() throws Exception {
     BaseDirectoryWrapper dir = newFSDirectory(createTempDir("2BFixedBinary"));
     if (dir instanceof MockDirectoryWrapper) {
@@ -50,7 +53,8 @@ public class Test2BBinaryDocValues extends LuceneTestCase {
         .setRAMBufferSizeMB(256.0)
         .setMergeScheduler(new ConcurrentMergeScheduler())
         .setMergePolicy(newLogMergePolicy(false, 10))
-        .setOpenMode(IndexWriterConfig.OpenMode.CREATE));
+        .setOpenMode(IndexWriterConfig.OpenMode.CREATE)
+        .setCodec(TestUtil.getDefaultCodec()));
 
     Document doc = new Document();
     byte bytes[] = new byte[4];
@@ -58,7 +62,7 @@ public class Test2BBinaryDocValues extends LuceneTestCase {
     BinaryDocValuesField dvField = new BinaryDocValuesField("dv", data);
     doc.add(dvField);
     
-    for (int i = 0; i < Integer.MAX_VALUE; i++) {
+    for (int i = 0; i < IndexWriter.MAX_DOCS; i++) {
       bytes[0] = (byte)(i >> 24);
       bytes[1] = (byte)(i >> 16);
       bytes[2] = (byte)(i >> 8);
@@ -78,8 +82,8 @@ public class Test2BBinaryDocValues extends LuceneTestCase {
     
     DirectoryReader r = DirectoryReader.open(dir);
     int expectedValue = 0;
-    for (AtomicReaderContext context : r.leaves()) {
-      AtomicReader reader = context.reader();
+    for (LeafReaderContext context : r.leaves()) {
+      LeafReader reader = context.reader();
       BinaryDocValues dv = reader.getBinaryDocValues("dv");
       for (int i = 0; i < reader.maxDoc(); i++) {
         bytes[0] = (byte)(expectedValue >> 24);
@@ -96,7 +100,7 @@ public class Test2BBinaryDocValues extends LuceneTestCase {
     dir.close();
   }
   
-  // indexes Integer.MAX_VALUE docs with a variable binary field
+  // indexes IndexWriter.MAX_DOCS docs with a variable binary field
   public void testVariableBinary() throws Exception {
     BaseDirectoryWrapper dir = newFSDirectory(createTempDir("2BVariableBinary"));
     if (dir instanceof MockDirectoryWrapper) {
@@ -109,7 +113,8 @@ public class Test2BBinaryDocValues extends LuceneTestCase {
         .setRAMBufferSizeMB(256.0)
         .setMergeScheduler(new ConcurrentMergeScheduler())
         .setMergePolicy(newLogMergePolicy(false, 10))
-        .setOpenMode(IndexWriterConfig.OpenMode.CREATE));
+        .setOpenMode(IndexWriterConfig.OpenMode.CREATE)
+        .setCodec(TestUtil.getDefaultCodec()));
 
     Document doc = new Document();
     byte bytes[] = new byte[4];
@@ -118,7 +123,7 @@ public class Test2BBinaryDocValues extends LuceneTestCase {
     BinaryDocValuesField dvField = new BinaryDocValuesField("dv", data);
     doc.add(dvField);
     
-    for (int i = 0; i < Integer.MAX_VALUE; i++) {
+    for (int i = 0; i < IndexWriter.MAX_DOCS; i++) {
       encoder.reset(bytes);
       encoder.writeVInt(i % 65535); // 1, 2, or 3 bytes
       data.length = encoder.getPosition();
@@ -138,8 +143,8 @@ public class Test2BBinaryDocValues extends LuceneTestCase {
     DirectoryReader r = DirectoryReader.open(dir);
     int expectedValue = 0;
     ByteArrayDataInput input = new ByteArrayDataInput();
-    for (AtomicReaderContext context : r.leaves()) {
-      AtomicReader reader = context.reader();
+    for (LeafReaderContext context : r.leaves()) {
+      LeafReader reader = context.reader();
       BinaryDocValues dv = reader.getBinaryDocValues("dv");
       for (int i = 0; i < reader.maxDoc(); i++) {
         final BytesRef term = dv.get(i);

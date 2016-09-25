@@ -25,13 +25,10 @@ import java.util.Map;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.codecs.DocValuesConsumer;
 import org.apache.lucene.codecs.DocValuesFormat;
-import org.apache.lucene.codecs.FieldInfosWriter;
 import org.apache.lucene.codecs.NormsConsumer;
 import org.apache.lucene.codecs.NormsFormat;
 import org.apache.lucene.codecs.StoredFieldsWriter;
 import org.apache.lucene.document.FieldType;
-import org.apache.lucene.index.FieldInfo.DocValuesType;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.search.similarities.Similarity;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.util.ArrayUtil;
@@ -118,8 +115,7 @@ final class DefaultIndexingChain extends DocConsumer {
     // consumer can alter the FieldInfo* if necessary.  EG,
     // FreqProxTermsWriter does this with
     // FieldInfo.storePayload.
-    FieldInfosWriter infosWriter = docWriter.codec.fieldInfosFormat().getFieldInfosWriter();
-    infosWriter.write(state.directory, state.segmentInfo.name, "", state.fieldInfos, IOContext.DEFAULT);
+    docWriter.codec.fieldInfosFormat().write(state.directory, state.segmentInfo, "", state.fieldInfos, IOContext.DEFAULT);
   }
 
   /** Writes all buffered doc values (called from {@link #flush}). */
@@ -132,6 +128,10 @@ final class DefaultIndexingChain extends DocConsumer {
         PerField perField = fieldHash[i];
         while (perField != null) {
           if (perField.docValuesWriter != null) {
+            if (perField.fieldInfo.getDocValuesType() == DocValuesType.NONE) {
+              // BUG
+              throw new AssertionError("segment=" + state.segmentInfo + ": field=\"" + perField.fieldInfo.name + "\" has no docValues but wrote them");
+            }
             if (dvConsumer == null) {
               // lazy init
               DocValuesFormat fmt = state.segmentInfo.getCodec().docValuesFormat();
@@ -141,6 +141,9 @@ final class DefaultIndexingChain extends DocConsumer {
             perField.docValuesWriter.finish(docCount);
             perField.docValuesWriter.flush(state, dvConsumer);
             perField.docValuesWriter = null;
+          } else if (perField.fieldInfo.getDocValuesType() != DocValuesType.NONE) {
+            // BUG
+            throw new AssertionError("segment=" + state.segmentInfo + ": field=\"" + perField.fieldInfo.name + "\" has docValues but did not write them");
           }
           perField = perField.next;
         }
@@ -157,6 +160,16 @@ final class DefaultIndexingChain extends DocConsumer {
       } else {
         IOUtils.closeWhileHandlingException(dvConsumer);
       }
+    }
+
+    if (state.fieldInfos.hasDocValues() == false) {
+      if (dvConsumer != null) {
+        // BUG
+        throw new AssertionError("segment=" + state.segmentInfo + ": fieldInfos has no docValues but wrote them");
+      }
+    } else if (dvConsumer == null) {
+      // BUG
+      throw new AssertionError("segment=" + state.segmentInfo + ": fieldInfos has docValues but did not wrote them");
     }
   }
 
@@ -185,14 +198,10 @@ final class DefaultIndexingChain extends DocConsumer {
 
           // we must check the final value of omitNorms for the fieldinfo: it could have 
           // changed for this field since the first time we added it.
-          if (fi.omitsNorms() == false) {
-            if (perField.norms != null) {
-              perField.norms.finish(state.segmentInfo.getDocCount());
-              perField.norms.flush(state, normsConsumer);
-              assert fi.getNormType() == DocValuesType.NUMERIC;
-            } else if (fi.isIndexed()) {
-              assert fi.getNormType() == null: "got " + fi.getNormType() + "; field=" + fi.name;
-            }
+          if (fi.omitsNorms() == false && fi.getIndexOptions() != IndexOptions.NONE) {
+            assert perField.norms != null: "field=" + fi.name;
+            perField.norms.finish(state.segmentInfo.getDocCount());
+            perField.norms.flush(state, normsConsumer);
           }
         }
       }
@@ -352,8 +361,11 @@ final class DefaultIndexingChain extends DocConsumer {
           abort = false;
         }
 
-        DocValuesType dvType = fieldType.docValueType();
-        if (dvType != null) {
+        DocValuesType dvType = fieldType.docValuesType();
+        if (dvType == null) {
+          throw new NullPointerException("docValuesType cannot be null (field: \"" + fieldName + "\")");
+        }
+        if (dvType != DocValuesType.NONE) {
           indexDocValue(fp, dvType, field);
         }
       }
@@ -367,7 +379,10 @@ final class DefaultIndexingChain extends DocConsumer {
   }
 
   private static void verifyFieldType(String name, IndexableFieldType ft) {
-    if (ft.indexed() == false) {
+    if (ft.indexOptions() == null) {
+      throw new NullPointerException("IndexOptions must not be null (field: \"" + name + "\")");
+    }
+    if (ft.indexOptions() == IndexOptions.NONE) {
       if (ft.storeTermVectors()) {
         throw new IllegalArgumentException("cannot store term vectors "
                                            + "for a field that is not indexed (field=\"" + name + "\")");
@@ -391,14 +406,12 @@ final class DefaultIndexingChain extends DocConsumer {
    *  value */
   private void indexDocValue(PerField fp, DocValuesType dvType, StorableField field) throws IOException {
 
-    boolean hasDocValues = fp.fieldInfo.hasDocValues();
-
-    // This will throw an exc if the caller tried to
-    // change the DV type for the field:
-    fp.fieldInfo.setDocValuesType(dvType);
-    if (hasDocValues == false) {
+    if (fp.fieldInfo.getDocValuesType() == DocValuesType.NONE) {
+      // This will throw an exc if the caller tried to
+      // change the DV type for the field:
       fieldInfos.globalFieldNumbers.setDocValuesType(fp.fieldInfo.number, fp.fieldInfo.name, dvType);
     }
+    fp.fieldInfo.setDocValuesType(dvType);
 
     int docID = docState.docID;
 
@@ -471,7 +484,11 @@ final class DefaultIndexingChain extends DocConsumer {
     if (fp == null) {
       // First time we are seeing this field in this segment
 
-      FieldInfo fi = fieldInfos.addOrUpdate(name, fieldType);
+      FieldInfo fi = fieldInfos.getOrAdd(name);
+      // Messy: must set this here because e.g. FreqProxTermsWriterPerField looks at the initial
+      // IndexOptions to decide what arrays it must create).  Then, we also must set it in
+      // PerField.invert to allow for later downgrading of the index options:
+      fi.setIndexOptions(fieldType.indexOptions());
       
       fp = new PerField(fi, invert);
       fp.next = fieldHash[hashPos];
@@ -489,12 +506,12 @@ final class DefaultIndexingChain extends DocConsumer {
         fields = newFields;
       }
 
-    } else {
-      fp.fieldInfo.update(fieldType);
-
-      if (invert && fp.invertState == null) {
-        fp.setInvertState();
-      }
+    } else if (invert && fp.invertState == null) {
+      // Messy: must set this here because e.g. FreqProxTermsWriterPerField looks at the initial
+      // IndexOptions to decide what arrays it must create).  Then, we also must set it in
+      // PerField.invert to allow for later downgrading of the index options:
+      fp.fieldInfo.setIndexOptions(fieldType.indexOptions());
+      fp.setInvertState();
     }
 
     return fp;
@@ -526,6 +543,8 @@ final class DefaultIndexingChain extends DocConsumer {
     // reused
     TokenStream tokenStream;
 
+    IndexOptions indexOptions;
+
     public PerField(FieldInfo fieldInfo, boolean invert) {
       this.fieldInfo = fieldInfo;
       similarity = docState.similarity;
@@ -537,6 +556,11 @@ final class DefaultIndexingChain extends DocConsumer {
     void setInvertState() {
       invertState = new FieldInvertState(fieldInfo.name);
       termsHashPerField = termsHash.addField(invertState, fieldInfo);
+      if (fieldInfo.omitsNorms() == false) {
+        assert norms == null;
+        // Even if no documents actually succeed in setting a norm, we still write norms for this segment:
+        norms = new NormValuesWriter(fieldInfo, docState.docWriter.bytesUsed);
+      }
     }
 
     @Override
@@ -545,11 +569,7 @@ final class DefaultIndexingChain extends DocConsumer {
     }
 
     public void finish() throws IOException {
-      if (fieldInfo.omitsNorms() == false) {
-        if (norms == null) {
-          fieldInfo.setNormValueType(FieldInfo.DocValuesType.NUMERIC);
-          norms = new NormValuesWriter(fieldInfo, docState.docWriter.bytesUsed);
-        }
+      if (fieldInfo.omitsNorms() == false && invertState.length != 0) {
         norms.addValue(docState.docID, similarity.computeNorm(invertState));
       }
 
@@ -568,15 +588,19 @@ final class DefaultIndexingChain extends DocConsumer {
 
       IndexableFieldType fieldType = field.fieldType();
 
+      IndexOptions indexOptions = fieldType.indexOptions();
+      fieldInfo.setIndexOptions(indexOptions);
+
+      if (fieldType.omitNorms()) {
+        fieldInfo.setOmitsNorms();
+      }
+
       final boolean analyzed = fieldType.tokenized() && docState.analyzer != null;
         
       // only bother checking offsets if something will consume them.
       // TODO: after we fix analyzers, also check if termVectorOffsets will be indexed.
-      final boolean checkOffsets = fieldType.indexOptions() == IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS;
+      final boolean checkOffsets = indexOptions == IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS;
 
-      int lastStartOffset = 0;
-      int lastPosition = 0;
-        
       /*
        * To assist people in tracking down problems in analysis components, we wish to write the field name to the infostream
        * when we fail. We expect some caller to eventually deal with the real exception, so we don't want any 'catch' clauses,
@@ -588,7 +612,6 @@ final class DefaultIndexingChain extends DocConsumer {
         // reset the TokenStream to the first token
         stream.reset();
         invertState.setAttributeSource(stream);
-
         termsHashPerField.start(field, first);
 
         while (stream.incrementToken()) {
@@ -602,13 +625,13 @@ final class DefaultIndexingChain extends DocConsumer {
 
           int posIncr = invertState.posIncrAttribute.getPositionIncrement();
           invertState.position += posIncr;
-          if (invertState.position < lastPosition) {
+          if (invertState.position < invertState.lastPosition) {
             if (posIncr == 0) {
               throw new IllegalArgumentException("first position increment must be > 0 (got 0) for field '" + field.name() + "'");
             }
             throw new IllegalArgumentException("position increments (and gaps) must be >= 0 (got " + posIncr + ") for field '" + field.name() + "'");
           }
-          lastPosition = invertState.position;
+          invertState.lastPosition = invertState.position;
           if (posIncr == 0) {
             invertState.numOverlap++;
           }
@@ -616,13 +639,17 @@ final class DefaultIndexingChain extends DocConsumer {
           if (checkOffsets) {
             int startOffset = invertState.offset + invertState.offsetAttribute.startOffset();
             int endOffset = invertState.offset + invertState.offsetAttribute.endOffset();
-            if (startOffset < lastStartOffset || endOffset < startOffset) {
+            if (startOffset < invertState.lastStartOffset || endOffset < startOffset) {
               throw new IllegalArgumentException("startOffset must be non-negative, and endOffset must be >= startOffset, and offsets must not go backwards "
-                                                 + "startOffset=" + startOffset + ",endOffset=" + endOffset + ",lastStartOffset=" + lastStartOffset + " for field '" + field.name() + "'");
+                                                 + "startOffset=" + startOffset + ",endOffset=" + endOffset + ",lastStartOffset=" + invertState.lastStartOffset + " for field '" + field.name() + "'");
             }
-            lastStartOffset = startOffset;
+            invertState.lastStartOffset = startOffset;
           }
 
+          invertState.length++;
+          if (invertState.length < 0) {
+            throw new IllegalArgumentException("too many tokens in field '" + field.name() + "'");
+          }
           //System.out.println("  term=" + invertState.termAttribute);
 
           // If we hit an exception in here, we abort
@@ -634,8 +661,6 @@ final class DefaultIndexingChain extends DocConsumer {
           aborting = true;
           termsHashPerField.add();
           aborting = false;
-
-          invertState.length++;
         }
 
         // trigger streams to perform end-of-stream operations

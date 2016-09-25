@@ -31,7 +31,6 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.store.BaseDirectoryWrapper;
@@ -45,20 +44,17 @@ import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.TimeUnits;
-
 import com.carrotsearch.randomizedtesting.annotations.TimeoutSuite;
 
 // NOTE: SimpleText codec will consume very large amounts of
 // disk (but, should run successfully).  Best to run w/
 // -Dtests.codec=<current codec>, and w/ plenty of RAM, eg:
 //
-//   ant test -Dtests.monster=true -Dtests.heapsize=8g
-//
-//   java -server -Xmx8g -d64 -cp .:lib/junit-4.10.jar:./build/classes/test:./build/classes/test-framework:./build/classes/java -Dlucene.version=4.0-dev -Dtests.directory=MMapDirectory -DtempDir=build -ea org.junit.runner.JUnitCore org.apache.lucene.index.Test2BTerms
+//   ant test -Dtests.monster=true -Dtests.heapsize=8g -Dtests.codec=Lucene50 -Dtestcase=Test2BTerms
 //
 @SuppressCodecs({ "SimpleText", "Memory", "Direct" })
-@Monster("very slow, use 8g heap")
-@TimeoutSuite(millis = 6 * TimeUnits.HOUR)
+@Monster("very slow, use 5g minimum heap")
+@TimeoutSuite(millis = 80 * TimeUnits.HOUR) // effectively no limit
 public class Test2BTerms extends LuceneTestCase {
 
   private final static int TOKEN_LEN = 5;
@@ -186,7 +182,8 @@ public class Test2BTerms extends LuceneTestCase {
                                       .setRAMBufferSizeMB(256.0)
                                       .setMergeScheduler(new ConcurrentMergeScheduler())
                                       .setMergePolicy(newLogMergePolicy(false, 10))
-                                      .setOpenMode(IndexWriterConfig.OpenMode.CREATE));
+                                      .setOpenMode(IndexWriterConfig.OpenMode.CREATE)
+                                      .setCodec(TestUtil.getDefaultCodec()));
 
       MergePolicy mp = w.getConfig().getMergePolicy();
       if (mp instanceof LogByteSizeMergePolicy) {
@@ -198,7 +195,7 @@ public class Test2BTerms extends LuceneTestCase {
       final MyTokenStream ts = new MyTokenStream(random(), TERMS_PER_DOC);
 
       FieldType customType = new FieldType(TextField.TYPE_NOT_STORED);
-      customType.setIndexOptions(IndexOptions.DOCS_ONLY);
+      customType.setIndexOptions(IndexOptions.DOCS);
       customType.setOmitNorms(true);
       Field field = new Field("field", ts, customType);
       doc.add(field);
@@ -262,7 +259,7 @@ public class Test2BTerms extends LuceneTestCase {
   private void testSavedTerms(IndexReader r, List<BytesRef> terms) throws IOException {
     System.out.println("TEST: run " + terms.size() + " terms on reader=" + r);
     IndexSearcher s = newSearcher(r);
-    Collections.shuffle(terms);
+    Collections.shuffle(terms, random());
     TermsEnum termsEnum = MultiFields.getTerms(r, "field").iterator(null);
     boolean failed = false;
     for(int iter=0;iter<10*terms.size();iter++) {

@@ -20,16 +20,15 @@ package org.apache.solr.store.blockcache;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.util.Collection;
 import java.util.Set;
 
+import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
-import org.apache.lucene.store.Lock;
-import org.apache.lucene.store.LockFactory;
 import org.apache.solr.store.hdfs.HdfsDirectory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,7 +36,7 @@ import org.slf4j.LoggerFactory;
 /**
  * @lucene.experimental
  */
-public class BlockDirectory extends Directory {
+public class BlockDirectory extends FilterDirectory {
   public static Logger LOG = LoggerFactory.getLogger(BlockDirectory.class);
   
   public static final long BLOCK_SHIFT = 13; // 2^13 = 8,192 bytes per block
@@ -85,7 +84,6 @@ public class BlockDirectory extends Directory {
     public void releaseResources() {}
   };
   
-  private final Directory directory;
   private final int blockSize;
   private final String dirName;
   private final Cache cache;
@@ -96,8 +94,8 @@ public class BlockDirectory extends Directory {
   public BlockDirectory(String dirName, Directory directory, Cache cache,
       Set<String> blockCacheFileTypes, boolean blockCacheReadEnabled,
       boolean blockCacheWriteEnabled) throws IOException {
+    super(directory);
     this.dirName = dirName;
-    this.directory = directory;
     blockSize = BLOCK_SIZE;
     this.cache = cache;
     if (blockCacheFileTypes == null || blockCacheFileTypes.isEmpty()) {
@@ -113,14 +111,11 @@ public class BlockDirectory extends Directory {
     if (!blockCacheWriteEnabled) {
       LOG.info("Block cache on write is disabled");
     }
-    if (directory.getLockFactory() != null) {
-      setLockFactory(directory.getLockFactory());
-    }
   }
   
   private IndexInput openInput(String name, int bufferSize, IOContext context)
       throws IOException {
-    final IndexInput source = directory.openInput(name, context);
+    final IndexInput source = super.openInput(name, context);
     if (useReadCache(name, context)) {
       return new CachedIndexInput(source, blockSize, name,
           getFileCacheName(name), cache, bufferSize);
@@ -236,13 +231,11 @@ public class BlockDirectory extends Directory {
       for (String file : files) {
         cache.delete(getFileCacheName(file));
       }
-      // segments.gen won't be removed above
-      cache.delete(dirName + "/" + "segments.gen");
       
     } catch (FileNotFoundException e) {
       // the local file system folder may be gone
     } finally {
-      directory.close();
+      super.close();
       cache.releaseResources();
     }
   }
@@ -252,22 +245,18 @@ public class BlockDirectory extends Directory {
   }
   
   private long getFileModified(String name) throws IOException {
-    if (directory instanceof FSDirectory) {
-      File directory = ((FSDirectory) this.directory).getDirectory();
+    if (in instanceof FSDirectory) {
+      File directory = ((FSDirectory) in).getDirectory().toFile();
       File file = new File(directory, name);
       if (!file.exists()) {
         throw new FileNotFoundException("File [" + name + "] not found");
       }
       return file.lastModified();
-    } else if (directory instanceof HdfsDirectory) {
-      return ((HdfsDirectory) directory).fileModified(name);
+    } else if (in instanceof HdfsDirectory) {
+      return ((HdfsDirectory) in).fileModified(name);
     } else {
-      throw new RuntimeException("Not supported");
+      throw new UnsupportedOperationException();
     }
-  }
-  
-  public void clearLock(String name) throws IOException {
-    directory.clearLock(name);
   }
   
   String getFileCacheLocation(String name) {
@@ -281,42 +270,6 @@ public class BlockDirectory extends Directory {
    */
   public Cache getCache() {
     return cache;
-  }
-  
-  @Override
-  public void copy(Directory to, String src, String dest, IOContext context)
-      throws IOException {
-    directory.copy(to, src, dest, context);
-  }
-  
-  public LockFactory getLockFactory() {
-    return directory.getLockFactory();
-  }
-  
-  public String getLockID() {
-    return directory.getLockID();
-  }
-  
-  public Lock makeLock(String name) {
-    return directory.makeLock(name);
-  }
-  
-  public void setLockFactory(LockFactory lockFactory) throws IOException {
-    directory.setLockFactory(lockFactory);
-  }
-  
-  @Override
-  public void sync(Collection<String> names) throws IOException {
-    directory.sync(names);
-  }
-  
-  // @SuppressWarnings("deprecation")
-  // public void sync(String name) throws IOException {
-  // _directory.sync(name);
-  // }
-  
-  public String toString() {
-    return directory.toString();
   }
   
   /**
@@ -342,7 +295,9 @@ public class BlockDirectory extends Directory {
    * file/context.
    */
   boolean useWriteCache(String name, IOContext context) {
-    if (!blockCacheWriteEnabled) {
+    if (!blockCacheWriteEnabled || name.startsWith(IndexFileNames.PENDING_SEGMENTS)) {
+      // for safety, don't bother caching pending commits.
+      // the cache does support renaming (renameCacheFile), but thats a scary optimization.
       return false;
     }
     if (blockCacheFileTypes != null && !isCachableFile(name)) {
@@ -362,42 +317,18 @@ public class BlockDirectory extends Directory {
   @Override
   public IndexOutput createOutput(String name, IOContext context)
       throws IOException {
-    IndexOutput dest = directory.createOutput(name, context);
+    final IndexOutput dest = super.createOutput(name, context);
     if (useWriteCache(name, context)) {
-      return new CachedIndexOutput(this, dest, blockSize, name, cache,
-          blockSize);
+      return new CachedIndexOutput(this, dest, blockSize, name, cache, blockSize);
     }
     return dest;
   }
   
   public void deleteFile(String name) throws IOException {
     cache.delete(getFileCacheName(name));
-    directory.deleteFile(name);
+    super.deleteFile(name);
   }
-  
-  public long fileLength(String name) throws IOException {
-    return directory.fileLength(name);
-  }
-  
-  // @SuppressWarnings("deprecation")
-  // public long fileModified(String name) throws IOException {
-  // return _directory.fileModified(name);
-  // }
-  
-  public String[] listAll() throws IOException {
-    return directory.listAll();
-  }
-  
-  // @SuppressWarnings("deprecation")
-  // public void touchFile(String name) throws IOException {
-  // _directory.touchFile(name);
-  // }
-  
-  public Directory getDirectory() {
-    return directory;
-  }
-  
-  
+    
   public boolean isBlockCacheReadEnabled() {
     return blockCacheReadEnabled;
   }

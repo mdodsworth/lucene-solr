@@ -17,14 +17,13 @@
 
 package org.apache.solr.handler.component;
 
-import com.carrotsearch.hppc.IntOpenHashSet;
 import com.carrotsearch.hppc.IntIntOpenHashMap;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.Fields;
 import org.apache.lucene.index.IndexReader;
@@ -50,6 +49,7 @@ import org.apache.solr.common.params.QueryElevationParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.StrUtils;
 import org.apache.solr.schema.IndexSchema;
+import org.apache.solr.search.QueryParsing;
 import org.apache.solr.search.grouping.GroupingSpecification;
 import org.apache.solr.util.DOMUtil;
 import org.apache.solr.common.util.NamedList;
@@ -389,7 +389,8 @@ public class QueryElevationComponent extends SearchComponent implements SolrCore
     String exStr = params.get(QueryElevationParams.EXCLUDE);
 
     Query query = rb.getQuery();
-    String qstr = rb.getQueryString();
+    SolrParams localParams = rb.getQparser().getLocalParams();
+    String qstr = localParams == null ? rb.getQueryString() : localParams.get(QueryParsing.V);
     if (query == null || qstr == null) {
       return;
     }
@@ -559,11 +560,11 @@ public class QueryElevationComponent extends SearchComponent implements SolrCore
 
       boostDocs = new IntIntOpenHashMap(boosted.size()*2);
 
-      List<AtomicReaderContext>leaves = indexSearcher.getTopReaderContext().leaves();
+      List<LeafReaderContext>leaves = indexSearcher.getTopReaderContext().leaves();
       TermsEnum termsEnum = null;
       DocsEnum docsEnum = null;
-      for(AtomicReaderContext leaf : leaves) {
-        AtomicReader reader = leaf.reader();
+      for(LeafReaderContext leaf : leaves) {
+        LeafReader reader = leaf.reader();
         int docBase = leaf.docBase;
         Bits liveDocs = reader.getLiveDocs();
         Terms terms = reader.terms(fieldName);
@@ -676,7 +677,7 @@ public class QueryElevationComponent extends SearchComponent implements SolrCore
       }
 
       @Override
-      public FieldComparator setNextReader(AtomicReaderContext context) throws IOException {
+      public FieldComparator setNextReader(LeafReaderContext context) throws IOException {
         //convert the ids to Lucene doc ids, the ordSet and termValues needs to be the same size as the number of elevation docs we have
         ordSet.clear();
         Fields fields = context.reader().fields();

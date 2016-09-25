@@ -18,9 +18,10 @@ package org.apache.lucene.search;
  */
 import java.io.IOException;
 
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DocValues;
+import org.apache.lucene.util.BitDocIdSet;
+import org.apache.lucene.util.BitSet;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.Bits.MatchAllBits;
 import org.apache.lucene.util.Bits.MatchNoBits;
@@ -28,7 +29,7 @@ import org.apache.lucene.util.Bits.MatchNoBits;
 /**
  * A {@link Filter} that accepts all documents that have one or more values in a
  * given field. This {@link Filter} request {@link Bits} from
- * {@link AtomicReader#getDocsWithField}
+ * {@link org.apache.lucene.index.LeafReader#getDocsWithField}
  */
 public class FieldValueFilter extends Filter {
   private final String field;
@@ -76,7 +77,7 @@ public class FieldValueFilter extends Filter {
   }
 
   @Override
-  public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs)
+  public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs)
       throws IOException {
     final Bits docsWithField = DocValues.getDocsWithField(
         context.reader(), field);
@@ -94,10 +95,10 @@ public class FieldValueFilter extends Filter {
       if (docsWithField instanceof MatchNoBits) {
         return null;
       }
-      if (docsWithField instanceof DocIdSet) {
+      if (docsWithField instanceof BitSet) {
         // UweSays: this is always the case for our current impl - but who knows
         // :-)
-        return BitsFilteredDocIdSet.wrap((DocIdSet) docsWithField, acceptDocs);
+        return BitsFilteredDocIdSet.wrap(new BitDocIdSet((BitSet) docsWithField), acceptDocs);
       }
       return new DocValuesDocIdSet(context.reader().maxDoc(), acceptDocs) {
         @Override

@@ -21,29 +21,29 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Map;
 
+import org.apache.lucene.document.BinaryDocValuesField; // javadocs
+import org.apache.lucene.document.DoubleField; // javadocs
+import org.apache.lucene.document.FloatField; // javadocs
 import org.apache.lucene.document.IntField; // javadocs
 import org.apache.lucene.document.LongField; // javadocs
-import org.apache.lucene.document.FloatField; // javadocs
-import org.apache.lucene.document.DoubleField; // javadocs
-import org.apache.lucene.document.BinaryDocValuesField; // javadocs
 import org.apache.lucene.document.NumericDocValuesField; // javadocs
 import org.apache.lucene.document.SortedDocValuesField; // javadocs
 import org.apache.lucene.document.SortedSetDocValuesField; // javadocs
 import org.apache.lucene.document.StringField; // javadocs
-import org.apache.lucene.index.AtomicReader;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
-import org.apache.lucene.index.FilterAtomicReader;
 import org.apache.lucene.index.FilterDirectoryReader;
+import org.apache.lucene.index.FilterLeafReader;
+import org.apache.lucene.index.IndexOptions;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.uninverting.FieldCache.CacheEntry;
 import org.apache.lucene.util.Bits;
-import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.NumericUtils;
 
 /**
  * A FilterReader that exposes <i>indexed</i> values as if they also had
@@ -52,11 +52,11 @@ import org.apache.lucene.util.NumericUtils;
  * This is accomplished by "inverting the inverted index" or "uninversion".
  * <p>
  * The uninversion process happens lazily: upon the first request for the 
- * field's docvalues (e.g. via {@link AtomicReader#getNumericDocValues(String)} 
+ * field's docvalues (e.g. via {@link org.apache.lucene.index.LeafReader#getNumericDocValues(String)} 
  * or similar), it will create the docvalues on-the-fly if needed and cache it,
- * based on the core cache key of the wrapped AtomicReader.
+ * based on the core cache key of the wrapped LeafReader.
  */
-public class UninvertingReader extends FilterAtomicReader {
+public class UninvertingReader extends FilterLeafReader {
   
   /**
    * Specifies the type of uninversion to apply for the field. 
@@ -156,7 +156,7 @@ public class UninvertingReader extends FilterAtomicReader {
     public UninvertingDirectoryReader(DirectoryReader in, final Map<String,Type> mapping) {
       super(in, new FilterDirectoryReader.SubReaderWrapper() {
         @Override
-        public AtomicReader wrap(AtomicReader reader) {
+        public LeafReader wrap(LeafReader reader) {
           return new UninvertingReader(reader, mapping);
         }
       });
@@ -180,13 +180,13 @@ public class UninvertingReader extends FilterAtomicReader {
    *  
    * @lucene.internal
    */
-  public UninvertingReader(AtomicReader in, Map<String,Type> mapping) {
+  public UninvertingReader(LeafReader in, Map<String,Type> mapping) {
     super(in);
     this.mapping = mapping;
     ArrayList<FieldInfo> filteredInfos = new ArrayList<>();
     for (FieldInfo fi : in.getFieldInfos()) {
-      FieldInfo.DocValuesType type = fi.getDocValuesType();
-      if (fi.isIndexed() && !fi.hasDocValues()) {
+      DocValuesType type = fi.getDocValuesType();
+      if (fi.getIndexOptions() != IndexOptions.NONE && fi.getDocValuesType() == DocValuesType.NONE) {
         Type t = mapping.get(fi.name);
         if (t != null) {
           switch(t) {
@@ -194,28 +194,28 @@ public class UninvertingReader extends FilterAtomicReader {
             case LONG:
             case FLOAT:
             case DOUBLE:
-              type = FieldInfo.DocValuesType.NUMERIC;
+              type = DocValuesType.NUMERIC;
               break;
             case BINARY:
-              type = FieldInfo.DocValuesType.BINARY;
+              type = DocValuesType.BINARY;
               break;
             case SORTED:
-              type = FieldInfo.DocValuesType.SORTED;
+              type = DocValuesType.SORTED;
               break;
             case SORTED_SET_BINARY:
             case SORTED_SET_INTEGER:
             case SORTED_SET_FLOAT:
             case SORTED_SET_LONG:
             case SORTED_SET_DOUBLE:
-              type = FieldInfo.DocValuesType.SORTED_SET;
+              type = DocValuesType.SORTED_SET;
               break;
             default:
               throw new AssertionError();
           }
         }
       }
-      filteredInfos.add(new FieldInfo(fi.name, fi.isIndexed(), fi.number, fi.hasVectors(), fi.omitsNorms(),
-                                      fi.hasPayloads(), fi.getIndexOptions(), type, fi.getNormType(), -1, null));
+      filteredInfos.add(new FieldInfo(fi.name, fi.number, fi.hasVectors(), fi.omitsNorms(),
+                                      fi.hasPayloads(), fi.getIndexOptions(), type, -1, null));
     }
     fieldInfos = new FieldInfos(filteredInfos.toArray(new FieldInfo[filteredInfos.size()]));
   }
@@ -292,7 +292,7 @@ public class UninvertingReader extends FilterAtomicReader {
    */
   private Type getType(String field) {
     FieldInfo info = fieldInfos.fieldInfo(field);
-    if (info == null || info.hasDocValues() == false) {
+    if (info == null || info.getDocValuesType() == DocValuesType.NONE) {
       return null;
     }
     return mapping.get(field);

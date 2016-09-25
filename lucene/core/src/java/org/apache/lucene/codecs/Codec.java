@@ -86,6 +86,9 @@ public abstract class Codec implements NamedSPILoader.NamedSPI {
   /** Encodes/decodes live docs */
   public abstract LiveDocsFormat liveDocsFormat();
   
+  /** Encodes/decodes compound files */
+  public abstract CompoundFormat compoundFormat();
+  
   /** looks up a codec by name */
   public static Codec forName(String name) {
     if (loader == null) {
@@ -119,7 +122,7 @@ public abstract class Codec implements NamedSPILoader.NamedSPI {
     loader.reload(classloader);
   }
   
-  private static Codec defaultCodec = Codec.forName("Lucene410");
+  private static Codec defaultCodec = Codec.forName("Lucene50");
   
   /** expert: returns the default codec used for newly created
    *  {@link IndexWriterConfig}s.

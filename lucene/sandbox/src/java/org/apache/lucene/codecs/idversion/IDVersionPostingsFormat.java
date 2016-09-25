@@ -81,7 +81,7 @@ public class IDVersionPostingsFormat extends PostingsFormat {
 
   @Override
   public FieldsConsumer fieldsConsumer(SegmentWriteState state) throws IOException {
-    PostingsWriterBase postingsWriter = new IDVersionPostingsWriter(state);
+    PostingsWriterBase postingsWriter = new IDVersionPostingsWriter(state.liveDocs);
     boolean success = false;
     try {
       FieldsConsumer ret = new VersionBlockTreeTermsWriter(state, 
@@ -102,12 +102,7 @@ public class IDVersionPostingsFormat extends PostingsFormat {
     PostingsReaderBase postingsReader = new IDVersionPostingsReader();
     boolean success = false;
      try {
-       FieldsProducer ret = new VersionBlockTreeTermsReader(state.directory,
-                                                            state.fieldInfos,
-                                                            state.segmentInfo,
-                                                            postingsReader,
-                                                            state.context,
-                                                            state.segmentSuffix);
+       FieldsProducer ret = new VersionBlockTreeTermsReader(postingsReader, state);
        success = true;
        return ret;
      } finally {

@@ -30,11 +30,12 @@ import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.PhraseQuery;
 import org.apache.lucene.search.Query;
@@ -129,7 +130,7 @@ public class HighlighterPhraseTest extends LuceneTestCase {
         }
 
         @Override
-        protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+        protected void doSetNextReader(LeafReaderContext context) throws IOException {
           this.baseDoc = context.docBase;
         }
 
@@ -143,7 +144,7 @@ public class HighlighterPhraseTest extends LuceneTestCase {
       final Highlighter highlighter = new Highlighter(
           new SimpleHTMLFormatter(), new SimpleHTMLEncoder(),
           new QueryScorer(phraseQuery));
-      for (int position = bitset.nextSetBit(0); position >= 0 && position < maxDoc-1; position = bitset
+      for (int position = bitset.nextSetBit(0); position < maxDoc-1; position = bitset
           .nextSetBit(position + 1)) {
         assertEquals(0, position);
         final TokenStream tokenStream = TokenSources.getTokenStream(

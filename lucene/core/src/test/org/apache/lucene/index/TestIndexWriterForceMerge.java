@@ -48,8 +48,7 @@ public class TestIndexWriterForceMerge extends LuceneTestCase {
         writer.addDocument(doc);
       writer.close();
 
-      SegmentInfos sis = new SegmentInfos();
-      sis.read(dir);
+      SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
       final int segCount = sis.size();
 
       ldmp = new LogDocMergePolicy();
@@ -59,8 +58,7 @@ public class TestIndexWriterForceMerge extends LuceneTestCase {
       writer.forceMerge(3);
       writer.close();
 
-      sis = new SegmentInfos();
-      sis.read(dir);
+      sis = SegmentInfos.readLatestCommit(dir);
       final int optSegCount = sis.size();
 
       if (segCount < 3)
@@ -93,16 +91,14 @@ public class TestIndexWriterForceMerge extends LuceneTestCase {
       writer.waitForMerges();
       writer.commit();
 
-      SegmentInfos sis = new SegmentInfos();
-      sis.read(dir);
+      SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
 
       final int segCount = sis.size();
       writer.forceMerge(7);
       writer.commit();
       writer.waitForMerges();
 
-      sis = new SegmentInfos();
-      sis.read(dir);
+      sis = SegmentInfos.readLatestCommit(dir);
       final int optSegCount = sis.size();
 
       if (segCount < 7)
@@ -121,10 +117,12 @@ public class TestIndexWriterForceMerge extends LuceneTestCase {
    */
   public void testForceMergeTempSpaceUsage() throws IOException {
 
-    MockDirectoryWrapper dir = newMockDirectory();
+    final MockDirectoryWrapper dir = newMockDirectory();
+    dir.setEnableVirusScanner(false);
     IndexWriter writer  = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
                                                  .setMaxBufferedDocs(10)
                                                  .setMergePolicy(newLogMergePolicy()));
+    
     if (VERBOSE) {
       System.out.println("TEST: config1=" + writer.getConfig());
     }
@@ -138,16 +136,15 @@ public class TestIndexWriterForceMerge extends LuceneTestCase {
     TestIndexWriter.addDocWithIndex(writer, 500);
     writer.close();
 
-    if (VERBOSE) {
-      System.out.println("TEST: start disk usage");
-    }
     long startDiskUsage = 0;
-    String[] files = dir.listAll();
-    for(int i=0;i<files.length;i++) {
-      startDiskUsage += dir.fileLength(files[i]);
+    for (String f : dir.listAll()) {
+      startDiskUsage += dir.fileLength(f);
       if (VERBOSE) {
-        System.out.println(files[i] + ": " + dir.fileLength(files[i]));
+        System.out.println(f + ": " + dir.fileLength(f));
       }
+    }
+    if (VERBOSE) {
+      System.out.println("TEST: start disk usage = " + startDiskUsage);
     }
 
     dir.resetMaxUsedSizeInBytes();
@@ -156,11 +153,36 @@ public class TestIndexWriterForceMerge extends LuceneTestCase {
     writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
                                     .setOpenMode(OpenMode.APPEND)
                                     .setMergePolicy(newLogMergePolicy()));
+    
+    if (VERBOSE) {
+      System.out.println("TEST: config2=" + writer.getConfig());
+    }
+
     writer.forceMerge(1);
     writer.close();
+
+    long finalDiskUsage = 0;
+    for (String f : dir.listAll()) {
+      finalDiskUsage += dir.fileLength(f);
+      if (VERBOSE) {
+        System.out.println(f + ": " + dir.fileLength(f));
+      }
+    }
+    if (VERBOSE) {
+      System.out.println("TEST: final disk usage = " + finalDiskUsage);
+    }
+
+    // The result of the merged index is often smaller, but sometimes it could
+    // be bigger (compression slightly changes, Codec changes etc.). Therefore
+    // we compare the temp space used to the max of the initial and final index
+    // size
+    long maxStartFinalDiskUsage = Math.max(startDiskUsage, finalDiskUsage);
     long maxDiskUsage = dir.getMaxUsedSizeInBytes();
-    assertTrue("forceMerge used too much temporary space: starting usage was " + startDiskUsage + " bytes; max temp usage was " + maxDiskUsage + " but should have been " + (4*startDiskUsage) + " (= 4X starting usage)",
-               maxDiskUsage <= 4*startDiskUsage);
+    assertTrue("forceMerge used too much temporary space: starting usage was "
+        + startDiskUsage + " bytes; final usage was " + finalDiskUsage
+        + " bytes; max temp usage was " + maxDiskUsage
+        + " but should have been " + (3 * maxStartFinalDiskUsage)
+        + " (= 3X starting usage)", maxDiskUsage <= 3 * maxStartFinalDiskUsage);
     dir.close();
   }
   
@@ -200,8 +222,7 @@ public class TestIndexWriterForceMerge extends LuceneTestCase {
         assertTrue(reader.leaves().size() > 1);
         reader.close();
 
-        SegmentInfos infos = new SegmentInfos();
-        infos.read(dir);
+        SegmentInfos infos = SegmentInfos.readLatestCommit(dir);
         assertEquals(2, infos.size());
       }
     }

@@ -28,6 +28,7 @@ import junit.framework.Assert;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.http.client.HttpClient;
+import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.apache.lucene.util.QuickPatchThreadsFilter;
@@ -92,7 +93,7 @@ public class TestLBHttpSolrServer extends SolrTestCaseJ4 {
     httpClient = HttpClientUtil.createClient(null);
     HttpClientUtil.setConnectionTimeout(httpClient,  1000);
     for (int i = 0; i < solr.length; i++) {
-      solr[i] = new SolrInstance("solr/collection1" + i, createTempDir("instance-" + i), 0);
+      solr[i] = new SolrInstance("solr/collection1" + i, createTempDir("instance-" + i).toFile(), 0);
       solr[i].setUp();
       solr[i].startJetty();
       addDocs(solr[i]);
@@ -305,7 +306,7 @@ public class TestLBHttpSolrServer extends SolrTestCaseJ4 {
 
     public void tearDown() throws Exception {
       if (jetty != null) jetty.stop();
-      TestUtil.rm(homeDir);
+      IOUtils.rm(homeDir.toPath());
     }
 
     public void startJetty() throws Exception {

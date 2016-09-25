@@ -37,12 +37,12 @@ import org.apache.lucene.document.Field;
 import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.MultiFields;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.SlowCompositeReaderWrapper;
@@ -64,15 +64,15 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TopScoreDocCollector;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.BitSet;
+import org.apache.lucene.util.BitSetIterator;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.lucene.util.TestUtil;
 import org.junit.Test;
 
-@SuppressCodecs({"Lucene40", "Lucene41", "Lucene42"}) // we need SortedSet, docsWithField
 public class TestJoinUtil extends LuceneTestCase {
 
   public void testSimple() throws Exception {
@@ -238,12 +238,14 @@ public class TestJoinUtil extends LuceneTestCase {
     doc.add(new TextField("description", "random text", Field.Store.NO));
     doc.add(new TextField("name", "name1", Field.Store.NO));
     doc.add(new TextField(idField, "7", Field.Store.NO));
+    doc.add(new SortedDocValuesField(idField, new BytesRef("7")));
     w.addDocument(doc);
 
     // 1
     doc = new Document();
     doc.add(new TextField("price", "10.0", Field.Store.NO));
     doc.add(new TextField(idField, "2", Field.Store.NO));
+    doc.add(new SortedDocValuesField(idField, new BytesRef("2")));
     doc.add(new TextField(toField, "7", Field.Store.NO));
     w.addDocument(doc);
 
@@ -251,6 +253,7 @@ public class TestJoinUtil extends LuceneTestCase {
     doc = new Document();
     doc.add(new TextField("price", "20.0", Field.Store.NO));
     doc.add(new TextField(idField, "3", Field.Store.NO));
+    doc.add(new SortedDocValuesField(idField, new BytesRef("3")));
     doc.add(new TextField(toField, "7", Field.Store.NO));
     w.addDocument(doc);
 
@@ -266,6 +269,7 @@ public class TestJoinUtil extends LuceneTestCase {
     doc = new Document();
     doc.add(new TextField("price", "10.0", Field.Store.NO));
     doc.add(new TextField(idField, "5", Field.Store.NO));
+    doc.add(new SortedDocValuesField(idField, new BytesRef("5")));
     doc.add(new TextField(toField, "0", Field.Store.NO));
     w.addDocument(doc);
 
@@ -273,6 +277,7 @@ public class TestJoinUtil extends LuceneTestCase {
     doc = new Document();
     doc.add(new TextField("price", "20.0", Field.Store.NO));
     doc.add(new TextField(idField, "6", Field.Store.NO));
+    doc.add(new SortedDocValuesField(idField, new BytesRef("6")));
     doc.add(new TextField(toField, "0", Field.Store.NO));
     w.addDocument(doc);
 
@@ -453,7 +458,7 @@ public class TestJoinUtil extends LuceneTestCase {
         int r = random().nextInt(context.randomUniqueValues.length);
         boolean from = context.randomFrom[r];
         String randomValue = context.randomUniqueValues[r];
-        FixedBitSet expectedResult = createExpectedResult(randomValue, from, indexSearcher.getIndexReader(), context);
+        BitSet expectedResult = createExpectedResult(randomValue, from, indexSearcher.getIndexReader(), context);
 
         final Query actualQuery = new TermQuery(new Term("value", randomValue));
         if (VERBOSE) {
@@ -475,7 +480,7 @@ public class TestJoinUtil extends LuceneTestCase {
         }
 
         // Need to know all documents that have matches. TopDocs doesn't give me that and then I'd be also testing TopDocsCollector...
-        final FixedBitSet actualResult = new FixedBitSet(indexSearcher.getIndexReader().maxDoc());
+        final BitSet actualResult = new FixedBitSet(indexSearcher.getIndexReader().maxDoc());
         final TopScoreDocCollector topScoreDocCollector = TopScoreDocCollector.create(10, false);
         indexSearcher.search(joinQuery, new SimpleCollector() {
 
@@ -488,7 +493,7 @@ public class TestJoinUtil extends LuceneTestCase {
           }
 
           @Override
-          protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+          protected void doSetNextReader(LeafReaderContext context) throws IOException {
             docBase = context.docBase;
             topScoreDocCollector.getLeafCollector(context);
           }
@@ -506,12 +511,12 @@ public class TestJoinUtil extends LuceneTestCase {
         // Asserting bit set...
         if (VERBOSE) {
           System.out.println("expected cardinality:" + expectedResult.cardinality());
-          DocIdSetIterator iterator = expectedResult.iterator();
+          DocIdSetIterator iterator = new BitSetIterator(expectedResult, expectedResult.cardinality());
           for (int doc = iterator.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = iterator.nextDoc()) {
             System.out.println(String.format(Locale.ROOT, "Expected doc[%d] with id value %s", doc, indexSearcher.doc(doc).get("id")));
           }
           System.out.println("actual cardinality:" + actualResult.cardinality());
-          iterator = actualResult.iterator();
+          iterator = new BitSetIterator(actualResult, actualResult.cardinality());
           for (int doc = iterator.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = iterator.nextDoc()) {
             System.out.println(String.format(Locale.ROOT, "Actual doc[%d] with id value %s", doc, indexSearcher.doc(doc).get("id")));
           }
@@ -672,7 +677,7 @@ public class TestJoinUtil extends LuceneTestCase {
           }
 
           @Override
-          protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+          protected void doSetNextReader(LeafReaderContext context) throws IOException {
             docTermOrds = DocValues.getSortedSet(context.reader(), fromField);
           }
 
@@ -708,7 +713,7 @@ public class TestJoinUtil extends LuceneTestCase {
           }
 
           @Override
-          protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+          protected void doSetNextReader(LeafReaderContext context) throws IOException {
             terms = DocValues.getBinary(context.reader(), fromField);
             docsWithField = DocValues.getDocsWithField(context.reader(), fromField);
           }
@@ -728,7 +733,7 @@ public class TestJoinUtil extends LuceneTestCase {
       final Map<Integer, JoinScore> docToJoinScore = new HashMap<>();
       if (multipleValuesPerDocument) {
         if (scoreDocsInOrder) {
-          AtomicReader slowCompositeReader = SlowCompositeReaderWrapper.wrap(toSearcher.getIndexReader());
+          LeafReader slowCompositeReader = SlowCompositeReaderWrapper.wrap(toSearcher.getIndexReader());
           Terms terms = slowCompositeReader.terms(toField);
           if (terms != null) {
             DocsEnum docsEnum = null;
@@ -777,7 +782,7 @@ public class TestJoinUtil extends LuceneTestCase {
             }
 
             @Override
-            protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+            protected void doSetNextReader(LeafReaderContext context) throws IOException {
               docBase = context.docBase;
               docTermOrds = DocValues.getSortedSet(context.reader(), toField);
             }
@@ -805,7 +810,7 @@ public class TestJoinUtil extends LuceneTestCase {
           }
 
           @Override
-          protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+          protected void doSetNextReader(LeafReaderContext context) throws IOException {
             terms = DocValues.getBinary(context.reader(), toField);
             docBase = context.docBase;
           }
@@ -860,7 +865,7 @@ public class TestJoinUtil extends LuceneTestCase {
     return new TopDocs(hits.size(), scoreDocs, hits.isEmpty() ? Float.NaN : hits.get(0).getValue().score(scoreMode));
   }
 
-  private FixedBitSet createExpectedResult(String queryValue, boolean from, IndexReader topLevelReader, IndexIterationContext context) throws IOException {
+  private BitSet createExpectedResult(String queryValue, boolean from, IndexReader topLevelReader, IndexIterationContext context) throws IOException {
     final Map<String, List<RandomDoc>> randomValueDocs;
     final Map<String, List<RandomDoc>> linkValueDocuments;
     if (from) {
@@ -871,7 +876,7 @@ public class TestJoinUtil extends LuceneTestCase {
       linkValueDocuments = context.fromDocuments;
     }
 
-    FixedBitSet expectedResult = new FixedBitSet(topLevelReader.maxDoc());
+    BitSet expectedResult = new FixedBitSet(topLevelReader.maxDoc());
     List<RandomDoc> matchingDocs = randomValueDocs.get(queryValue);
     if (matchingDocs == null) {
       return new FixedBitSet(topLevelReader.maxDoc());

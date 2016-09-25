@@ -18,22 +18,23 @@ package org.apache.lucene.index;
  */
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.lucene.codecs.Codec;
-import org.apache.lucene.codecs.DocValuesFormat;
 import org.apache.lucene.codecs.DocValuesProducer;
 import org.apache.lucene.codecs.FieldInfosFormat;
+import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.NormsProducer;
 import org.apache.lucene.codecs.StoredFieldsReader;
 import org.apache.lucene.codecs.TermVectorsReader;
-import org.apache.lucene.index.FieldInfo.DocValuesType;
-import org.apache.lucene.store.CompoundFileDirectory;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.CloseableThreadLocal;
 import org.apache.lucene.util.IOUtils;
@@ -46,7 +47,7 @@ import org.apache.lucene.util.RamUsageEstimator;
  * may share the same core data.
  * @lucene.experimental
  */
-public final class SegmentReader extends AtomicReader implements Accountable {
+public final class SegmentReader extends LeafReader implements Accountable {
 
   private static final long BASE_RAM_BYTES_USED =
         RamUsageEstimator.shallowSizeOfInstance(SegmentReader.class)
@@ -88,13 +89,6 @@ public final class SegmentReader extends AtomicReader implements Accountable {
   // TODO: why is this public?
   public SegmentReader(SegmentCommitInfo si, IOContext context) throws IOException {
     this.si = si;
-    // TODO if the segment uses CFS, we may open the CFS file twice: once for
-    // reading the FieldInfos (if they are not gen'd) and second time by
-    // SegmentCoreReaders. We can open the CFS here and pass to SCR, but then it
-    // results in less readable code (resource not closed where it was opened).
-    // Best if we could somehow read FieldInfos in SCR but not keep it there, but
-    // constructors don't allow returning two things...
-    fieldInfos = readFieldInfos(si);
     core = new SegmentCoreReaders(this, si.info.dir, si, context);
     segDocValues = new SegmentDocValues();
     
@@ -109,12 +103,9 @@ public final class SegmentReader extends AtomicReader implements Accountable {
         liveDocs = null;
       }
       numDocs = si.info.getDocCount() - si.getDelCount();
-
-      if (fieldInfos.hasDocValues()) {
-        docValuesProducer = initDocValuesProducer(codec);
-      } else {
-        docValuesProducer = null;
-      }
+      
+      fieldInfos = initFieldInfos();
+      docValuesProducer = initDocValuesProducer();
 
       success = true;
     } finally {
@@ -149,24 +140,11 @@ public final class SegmentReader extends AtomicReader implements Accountable {
     this.core = sr.core;
     core.incRef();
     this.segDocValues = sr.segDocValues;
-    
-//    System.out.println("[" + Thread.currentThread().getName() + "] SR.init: sharing reader: " + sr + " for gens=" + sr.genDVProducers.keySet());
-    
-    // increment refCount of DocValuesProducers that are used by this reader
+
     boolean success = false;
     try {
-      final Codec codec = si.info.getCodec();
-      if (si.getFieldInfosGen() == -1) {
-        fieldInfos = sr.fieldInfos;
-      } else {
-        fieldInfos = readFieldInfos(si);
-      }
-      
-      if (fieldInfos.hasDocValues()) {
-        docValuesProducer = initDocValuesProducer(codec);
-      } else {
-        docValuesProducer = null;
-      }
+      fieldInfos = initFieldInfos();
+      docValuesProducer = initDocValuesProducer();
       success = true;
     } finally {
       if (!success) {
@@ -175,49 +153,33 @@ public final class SegmentReader extends AtomicReader implements Accountable {
     }
   }
 
-  // initialize the per-field DocValuesProducer
-  private DocValuesProducer initDocValuesProducer(Codec codec) throws IOException {
+  /**
+   * init most recent DocValues for the current commit
+   */
+  private DocValuesProducer initDocValuesProducer() throws IOException {
     final Directory dir = core.cfsReader != null ? core.cfsReader : si.info.dir;
-    final DocValuesFormat dvFormat = codec.docValuesFormat();
 
-    if (!si.hasFieldUpdates()) {
-      // simple case, no DocValues updates
-      return segDocValues.getDocValuesProducer(-1L, si, IOContext.READ, dir, dvFormat, fieldInfos);
+    if (!fieldInfos.hasDocValues()) {
+      return null;
+    } else if (si.hasFieldUpdates()) {
+      return new SegmentDocValuesProducer(si, dir, core.coreFieldInfos, fieldInfos, segDocValues);
     } else {
-      return new SegmentDocValuesProducer(si, dir, fieldInfos, segDocValues, dvFormat);
+      // simple case, no DocValues updates
+      return segDocValues.getDocValuesProducer(-1L, si, dir, fieldInfos);
     }
   }
   
   /**
-   * Reads the most recent {@link FieldInfos} of the given segment info.
-   * 
-   * @lucene.internal
+   * init most recent FieldInfos for the current commit
    */
-  static FieldInfos readFieldInfos(SegmentCommitInfo info) throws IOException {
-    final Directory dir;
-    final boolean closeDir;
-    if (info.getFieldInfosGen() == -1 && info.info.getUseCompoundFile()) {
-      // no fieldInfos gen and segment uses a compound file
-      dir = new CompoundFileDirectory(info.info.dir,
-          IndexFileNames.segmentFileName(info.info.name, "", IndexFileNames.COMPOUND_FILE_EXTENSION),
-          IOContext.READONCE,
-          false);
-      closeDir = true;
+  private FieldInfos initFieldInfos() throws IOException {
+    if (!si.hasFieldUpdates()) {
+      return core.coreFieldInfos;
     } else {
-      // gen'd FIS are read outside CFS, or the segment doesn't use a compound file
-      dir = info.info.dir;
-      closeDir = false;
-    }
-    
-    try {
-      final String segmentSuffix = info.getFieldInfosGen() == -1 ? "" : Long.toString(info.getFieldInfosGen(), Character.MAX_RADIX);
-      Codec codec = info.info.getCodec();
-      FieldInfosFormat fisFormat = codec.fieldInfosFormat();
-      return fisFormat.getFieldInfosReader().read(dir, info.info.name, segmentSuffix, IOContext.READONCE);
-    } finally {
-      if (closeDir) {
-        dir.close();
-      }
+      // updates always outside of CFS
+      FieldInfosFormat fisFormat = si.info.getCodec().fieldInfosFormat();
+      final String segmentSuffix = Long.toString(si.getFieldInfosGen(), Character.MAX_RADIX);
+      return fisFormat.read(si.info.dir, si.info, segmentSuffix, IOContext.READONCE);
     }
   }
   
@@ -258,7 +220,7 @@ public final class SegmentReader extends AtomicReader implements Accountable {
   }
 
   @Override
-  public Fields fields() {
+  public FieldsProducer fields() {
     ensureOpen();
     return core.fields;
   }
@@ -375,7 +337,7 @@ public final class SegmentReader extends AtomicReader implements Accountable {
       // Field does not exist
       return null;
     }
-    if (fi.getDocValuesType() == null) {
+    if (fi.getDocValuesType() == DocValuesType.NONE) {
       // Field was not indexed with doc values
       return null;
     }
@@ -420,7 +382,7 @@ public final class SegmentReader extends AtomicReader implements Accountable {
         // Field does not exist
         return null;
       }
-      if (fi.getDocValuesType() == null) {
+      if (fi.getDocValuesType() == DocValuesType.NONE) {
         // Field was not indexed with doc values
         return null;
       }
@@ -538,9 +500,31 @@ public final class SegmentReader extends AtomicReader implements Accountable {
   }
   
   @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    ensureOpen();
+    List<Accountable> resources = new ArrayList<>();
+    if (core.fields != null) {
+      resources.add(Accountables.namedAccountable("postings", core.fields));
+    }
+    if (core.normsProducer != null) {
+      resources.add(Accountables.namedAccountable("norms", core.normsProducer));
+    }
+    if (docValuesProducer != null) {
+      resources.add(Accountables.namedAccountable("docvalues", docValuesProducer));
+    }
+    if (getFieldsReader() != null) {
+      resources.add(Accountables.namedAccountable("stored fields", getFieldsReader()));
+    }
+    if (getTermVectorsReader() != null) {
+      resources.add(Accountables.namedAccountable("term vectors", getTermVectorsReader()));
+    }
+    return resources;
+  }
+
+  @Override
   public void checkIntegrity() throws IOException {
     ensureOpen();
-    
+
     // stored fields
     getFieldsReader().checkIntegrity();
     

@@ -70,6 +70,11 @@ public class FilterDirectory extends Directory {
   }
 
   @Override
+  public void renameFile(String source, String dest) throws IOException {
+    in.renameFile(source, dest);
+  }
+
+  @Override
   public IndexInput openInput(String name, IOContext context)
       throws IOException {
     return in.openInput(name, context);
@@ -81,28 +86,8 @@ public class FilterDirectory extends Directory {
   }
 
   @Override
-  public void clearLock(String name) throws IOException {
-    in.clearLock(name);
-  }
-
-  @Override
   public void close() throws IOException {
     in.close();
-  }
-
-  @Override
-  public void setLockFactory(LockFactory lockFactory) throws IOException {
-    in.setLockFactory(lockFactory);
-  }
-
-  @Override
-  public String getLockID() {
-    return in.getLockID();
-  }
-  
-  @Override
-  public LockFactory getLockFactory() {
-    return in.getLockFactory();
   }
 
   @Override

@@ -64,12 +64,11 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
 
       writer.close();
 
-      SegmentInfos sis = new SegmentInfos();
-      sis.read(dir);
+      SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
       assertEquals(2, sis.size());
 
-      FieldInfos fis1 = SegmentReader.readFieldInfos(sis.info(0));
-      FieldInfos fis2 = SegmentReader.readFieldInfos(sis.info(1));
+      FieldInfos fis1 = IndexWriter.readFieldInfos(sis.info(0));
+      FieldInfos fis2 = IndexWriter.readFieldInfos(sis.info(1));
 
       assertEquals("f1", fis1.fieldInfo(0).name);
       assertEquals("f2", fis1.fieldInfo(1).name);
@@ -82,11 +81,10 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
       writer.forceMerge(1);
       writer.close();
 
-      sis = new SegmentInfos();
-      sis.read(dir);
+      sis = SegmentInfos.readLatestCommit(dir);
       assertEquals(1, sis.size());
 
-      FieldInfos fis3 = SegmentReader.readFieldInfos(sis.info(0));
+      FieldInfos fis3 = IndexWriter.readFieldInfos(sis.info(0));
 
       assertEquals("f1", fis3.fieldInfo(0).name);
       assertEquals("f2", fis3.fieldInfo(1).name);
@@ -130,12 +128,11 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
     writer.addIndexes(dir2);
     writer.close();
 
-    SegmentInfos sis = new SegmentInfos();
-    sis.read(dir1);
+    SegmentInfos sis = SegmentInfos.readLatestCommit(dir1);
     assertEquals(2, sis.size());
 
-    FieldInfos fis1 = SegmentReader.readFieldInfos(sis.info(0));
-    FieldInfos fis2 = SegmentReader.readFieldInfos(sis.info(1));
+    FieldInfos fis1 = IndexWriter.readFieldInfos(sis.info(0));
+    FieldInfos fis2 = IndexWriter.readFieldInfos(sis.info(1));
 
     assertEquals("f1", fis1.fieldInfo(0).name);
     assertEquals("f2", fis1.fieldInfo(1).name);
@@ -161,10 +158,9 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
         d.add(new TextField("f2", "d1 second field", Field.Store.YES));
         writer.addDocument(d);
         writer.close();
-        SegmentInfos sis = new SegmentInfos();
-        sis.read(dir);
+        SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
         assertEquals(1, sis.size());
-        FieldInfos fis1 = SegmentReader.readFieldInfos(sis.info(0));
+        FieldInfos fis1 = IndexWriter.readFieldInfos(sis.info(0));
         assertEquals("f1", fis1.fieldInfo(0).name);
         assertEquals("f2", fis1.fieldInfo(1).name);
       }
@@ -178,11 +174,10 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
         d.add(new StoredField("f3", new byte[] { 1, 2, 3 }));
         writer.addDocument(d);
         writer.close();
-        SegmentInfos sis = new SegmentInfos();
-        sis.read(dir);
+        SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
         assertEquals(2, sis.size());
-        FieldInfos fis1 = SegmentReader.readFieldInfos(sis.info(0));
-        FieldInfos fis2 = SegmentReader.readFieldInfos(sis.info(1));
+        FieldInfos fis1 = IndexWriter.readFieldInfos(sis.info(0));
+        FieldInfos fis2 = IndexWriter.readFieldInfos(sis.info(1));
         assertEquals("f1", fis1.fieldInfo(0).name);
         assertEquals("f2", fis1.fieldInfo(1).name);
         assertEquals("f1", fis2.fieldInfo(0).name);
@@ -199,12 +194,11 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
         d.add(new StoredField("f3", new byte[] { 1, 2, 3, 4, 5 }));
         writer.addDocument(d);
         writer.close();
-        SegmentInfos sis = new SegmentInfos();
-        sis.read(dir);
+        SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
         assertEquals(3, sis.size());
-        FieldInfos fis1 = SegmentReader.readFieldInfos(sis.info(0));
-        FieldInfos fis2 = SegmentReader.readFieldInfos(sis.info(1));
-        FieldInfos fis3 = SegmentReader.readFieldInfos(sis.info(2));
+        FieldInfos fis1 = IndexWriter.readFieldInfos(sis.info(0));
+        FieldInfos fis2 = IndexWriter.readFieldInfos(sis.info(1));
+        FieldInfos fis3 = IndexWriter.readFieldInfos(sis.info(2));
         assertEquals("f1", fis1.fieldInfo(0).name);
         assertEquals("f2", fis1.fieldInfo(1).name);
         assertEquals("f1", fis2.fieldInfo(0).name);
@@ -231,10 +225,9 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
       writer.forceMerge(1);
       writer.close();
 
-      SegmentInfos sis = new SegmentInfos();
-      sis.read(dir);
+      SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
       assertEquals(1, sis.size());
-      FieldInfos fis1 = SegmentReader.readFieldInfos(sis.info(0));
+      FieldInfos fis1 = IndexWriter.readFieldInfos(sis.info(0));
       assertEquals("f1", fis1.fieldInfo(0).name);
       assertEquals("f2", fis1.fieldInfo(1).name);
       assertEquals("f3", fis1.fieldInfo(2).name);
@@ -269,14 +262,13 @@ public class TestConsistentFieldNumbers extends LuceneTestCase {
     writer.forceMerge(1);
     writer.close();
 
-    SegmentInfos sis = new SegmentInfos();
-    sis.read(dir);
+    SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
     for (SegmentCommitInfo si : sis) {
-      FieldInfos fis = SegmentReader.readFieldInfos(si);
+      FieldInfos fis = IndexWriter.readFieldInfos(si);
 
       for (FieldInfo fi : fis) {
         Field expected = getField(Integer.parseInt(fi.name));
-        assertEquals(expected.fieldType().indexed(), fi.isIndexed());
+        assertEquals(expected.fieldType().indexOptions(), fi.getIndexOptions());
         assertEquals(expected.fieldType().storeTermVectors(), fi.hasVectors());
       }
     }

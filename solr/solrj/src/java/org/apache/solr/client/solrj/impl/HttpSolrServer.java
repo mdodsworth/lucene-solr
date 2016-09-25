@@ -42,8 +42,10 @@ import org.apache.http.NameValuePair;
 import org.apache.http.NoHttpResponseException;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpRequestBase;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.params.ClientPNames;
@@ -176,8 +178,11 @@ public class HttpSolrServer extends SolrServer {
   }
 
   /**
-   * Expert Method.
+   * Expert Method
    * @param queryParams set of param keys to only send via the query string
+   * Note that the param will be sent as a query string if the key is part
+   * of this Set or the SolrRequest's query params.
+   * @see org.apache.solr.client.solrj.SolrRequest#getQueryParams
    */
   public void setQueryParams(Set<String> queryParams) {
     this.queryParams = queryParams;
@@ -252,7 +257,24 @@ public class HttpSolrServer extends SolrServer {
     mrr.httpUriRequest = method;
     return mrr;
   }
-  
+
+  protected ModifiableSolrParams calculateQueryParams(Set<String> queryParamNames,
+      ModifiableSolrParams wparams) {
+    ModifiableSolrParams queryModParams = new ModifiableSolrParams();
+    if (queryParamNames != null) {
+      for (String param : queryParamNames) {
+        String[] value = wparams.getParams(param) ;
+        if (value != null) {
+          for (String v : value) {
+            queryModParams.add(param, v);
+          }
+          wparams.remove(param);
+        }
+      }
+    }
+    return queryModParams;
+  }
+
   protected HttpRequestBase createMethod(final SolrRequest request) throws IOException, SolrServerException {
     HttpRequestBase method = null;
     InputStream is = null;
@@ -293,7 +315,7 @@ public class HttpSolrServer extends SolrServer {
             }
             method = new HttpGet( baseUrl + path + ClientUtils.toQueryString( wparams, false ) );
           }
-          else if( SolrRequest.METHOD.POST == request.getMethod() ) {
+          else if( SolrRequest.METHOD.POST == request.getMethod() || SolrRequest.METHOD.PUT == request.getMethod() ) {
 
             String url = baseUrl + path;
             boolean hasNullStreamName = false;
@@ -305,25 +327,19 @@ public class HttpSolrServer extends SolrServer {
                 }
               }
             }
-            boolean isMultipart = (this.useMultiPartPost || ( streams != null && streams.size() > 1 )) && !hasNullStreamName;
-            
-            // only send this list of params as query string params
-            ModifiableSolrParams queryParams = new ModifiableSolrParams();
-            for (String param : this.queryParams) {
-              String[] value = wparams.getParams(param) ;
-              if (value != null) {
-                for (String v : value) {
-                  queryParams.add(param, v);
-                }
-                wparams.remove(param);
-              }
-            }
-            
-            LinkedList<NameValuePair> postParams = new LinkedList<>();
+            boolean isMultipart = ((this.useMultiPartPost && SolrRequest.METHOD.POST == request.getMethod())
+              || ( streams != null && streams.size() > 1 )) && !hasNullStreamName;
+
+            LinkedList<NameValuePair> postOrPutParams = new LinkedList<>();
             if (streams == null || isMultipart) {
-              HttpPost post = new HttpPost(url + ClientUtils.toQueryString( queryParams, false ));
+              // send server list and request list as query string params
+              ModifiableSolrParams queryParams = calculateQueryParams(this.queryParams, wparams);
+              queryParams.add(calculateQueryParams(request.getQueryParams(), wparams));
+              String fullQueryUrl = url + ClientUtils.toQueryString( queryParams, false );
+              HttpEntityEnclosingRequestBase postOrPut = SolrRequest.METHOD.POST == request.getMethod() ?
+                new HttpPost(fullQueryUrl) : new HttpPut(fullQueryUrl);
               if (!isMultipart) {
-                post.addHeader("Content-Type",
+                postOrPut.addHeader("Content-Type",
                     "application/x-www-form-urlencoded; charset=UTF-8");
               }
 
@@ -337,7 +353,7 @@ public class HttpSolrServer extends SolrServer {
                     if (isMultipart) {
                       parts.add(new FormBodyPart(p, new StringBody(v, StandardCharsets.UTF_8)));
                     } else {
-                      postParams.add(new BasicNameValuePair(p, v));
+                      postOrPutParams.add(new BasicNameValuePair(p, v));
                     }
                   }
                 }
@@ -366,18 +382,19 @@ public class HttpSolrServer extends SolrServer {
                 for(FormBodyPart p: parts) {
                   entity.addPart(p);
                 }
-                post.setEntity(entity);
+                postOrPut.setEntity(entity);
               } else {
                 //not using multipart
-                post.setEntity(new UrlEncodedFormEntity(postParams, StandardCharsets.UTF_8));
+                postOrPut.setEntity(new UrlEncodedFormEntity(postOrPutParams, StandardCharsets.UTF_8));
               }
 
-              method = post;
+              method = postOrPut;
             }
             // It is has one stream, it is the post body, put the params in the URL
             else {
               String pstr = ClientUtils.toQueryString(wparams, false);
-              HttpPost post = new HttpPost(url + pstr);
+              HttpEntityEnclosingRequestBase postOrPut = SolrRequest.METHOD.POST == request.getMethod() ?
+                new HttpPost(url + pstr) : new HttpPut(url + pstr);
 
               // Single stream as body
               // Using a loop just to get the first one
@@ -387,7 +404,7 @@ public class HttpSolrServer extends SolrServer {
                 break;
               }
               if (contentStream[0] instanceof RequestWriter.LazyContentStream) {
-                post.setEntity(new InputStreamEntity(contentStream[0].getStream(), -1) {
+                postOrPut.setEntity(new InputStreamEntity(contentStream[0].getStream(), -1) {
                   @Override
                   public Header getContentType() {
                     return new BasicHeader("Content-Type", contentStream[0].getContentType());
@@ -400,7 +417,7 @@ public class HttpSolrServer extends SolrServer {
                   
                 });
               } else {
-                post.setEntity(new InputStreamEntity(contentStream[0].getStream(), -1) {
+                postOrPut.setEntity(new InputStreamEntity(contentStream[0].getStream(), -1) {
                   @Override
                   public Header getContentType() {
                     return new BasicHeader("Content-Type", contentStream[0].getContentType());
@@ -412,7 +429,7 @@ public class HttpSolrServer extends SolrServer {
                   }
                 });
               }
-              method = post;
+              method = postOrPut;
             }
           }
           else {
@@ -530,6 +547,7 @@ public class HttpSolrServer extends SolrServer {
         throw new RemoteSolrException(httpStatus, e.getMessage(), e);
       }
       if (httpStatus != HttpStatus.SC_OK) {
+        NamedList<String> metadata = null;
         String reason = null;
         try {
           NamedList err = (NamedList) rsp.get("error");
@@ -538,6 +556,7 @@ public class HttpSolrServer extends SolrServer {
             if(reason == null) {
               reason = (String) err.get("trace");
             }
+            metadata = (NamedList<String>)err.get("metadata");
           }
         } catch (Exception ex) {}
         if (reason == null) {
@@ -547,7 +566,9 @@ public class HttpSolrServer extends SolrServer {
           msg.append("request: " + method.getURI());
           reason = java.net.URLDecoder.decode(msg.toString(), UTF_8);
         }
-        throw new RemoteSolrException(httpStatus, reason, null);
+        RemoteSolrException rss = new RemoteSolrException(httpStatus, reason, null);
+        if (metadata != null) rss.setMetadata(metadata);
+        throw rss;
       }
       success = true;
       return rsp;

@@ -112,7 +112,7 @@ public class OverseerTest extends SolrTestCaseJ4 {
         if (ec != null) {
           ec.cancelElection();
         }
-        ZkNodeProps m = new ZkNodeProps(Overseer.QUEUE_OPERATION, "deletecore",
+        ZkNodeProps m = new ZkNodeProps(Overseer.QUEUE_OPERATION, Overseer.OverseerAction.DELETECORE.toLower(),
             ZkStateReader.NODE_NAME_PROP, nodeName,
             ZkStateReader.CORE_NAME_PROP, coreName,
             ZkStateReader.CORE_NODE_NAME_PROP, coreNodeName,
@@ -121,7 +121,7 @@ public class OverseerTest extends SolrTestCaseJ4 {
             q.offer(ZkStateReader.toJSON(m));
          return null;
       } else {
-        ZkNodeProps m = new ZkNodeProps(Overseer.QUEUE_OPERATION, "state",
+        ZkNodeProps m = new ZkNodeProps(Overseer.QUEUE_OPERATION, Overseer.OverseerAction.STATE.toLower(),
         ZkStateReader.STATE_PROP, stateName,
         ZkStateReader.NODE_NAME_PROP, nodeName,
         ZkStateReader.CORE_NAME_PROP, coreName,
@@ -203,7 +203,7 @@ public class OverseerTest extends SolrTestCaseJ4 {
 
   @Test
   public void testShardAssignment() throws Exception {
-    String zkDir = createTempDir("zkData").getAbsolutePath();
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
 
     ZkTestServer server = new ZkTestServer(zkDir);
 
@@ -258,7 +258,7 @@ public class OverseerTest extends SolrTestCaseJ4 {
 
   @Test
   public void testBadQueueItem() throws Exception {
-    String zkDir = createTempDir("zkData").getAbsolutePath();
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
 
     ZkTestServer server = new ZkTestServer(zkDir);
 
@@ -332,7 +332,7 @@ public class OverseerTest extends SolrTestCaseJ4 {
   
   @Test
   public void testShardAssignmentBigger() throws Exception {
-    String zkDir = createTempDir("zkData").getAbsolutePath();
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
 
     final int nodeCount = random().nextInt(TEST_NIGHTLY ? 50 : 10)+(TEST_NIGHTLY ? 50 : 10)+1;   //how many simulated nodes (num of threads)
     final int coreCount = random().nextInt(TEST_NIGHTLY ? 100 : 11)+(TEST_NIGHTLY ? 100 : 11)+1; //how many cores to register
@@ -502,7 +502,7 @@ public class OverseerTest extends SolrTestCaseJ4 {
   
   @Test
   public void testStateChange() throws Exception {
-    String zkDir = createTempDir("zkData").getAbsolutePath();
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
     
     ZkTestServer server = new ZkTestServer(zkDir);
     
@@ -525,7 +525,7 @@ public class OverseerTest extends SolrTestCaseJ4 {
 
       DistributedQueue q = Overseer.getInQueue(zkClient);
       
-      ZkNodeProps m = new ZkNodeProps(Overseer.QUEUE_OPERATION, "state",
+      ZkNodeProps m = new ZkNodeProps(Overseer.QUEUE_OPERATION, Overseer.OverseerAction.STATE.toLower(),
           ZkStateReader.BASE_URL_PROP, "http://127.0.0.1/solr",
           ZkStateReader.NODE_NAME_PROP, "node1",
           ZkStateReader.COLLECTION_PROP, "collection1",
@@ -598,7 +598,7 @@ public class OverseerTest extends SolrTestCaseJ4 {
 
   @Test
   public void testOverseerFailure() throws Exception {
-    String zkDir = createTempDir("zkData").getAbsolutePath();
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
     ZkTestServer server = new ZkTestServer(zkDir);
     
 
@@ -720,7 +720,7 @@ public class OverseerTest extends SolrTestCaseJ4 {
   
   @Test
   public void testShardLeaderChange() throws Exception {
-    String zkDir = createTempDir("zkData").getAbsolutePath();
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
     final ZkTestServer server = new ZkTestServer(zkDir);
     SolrZkClient controllerClient = null;
     ZkStateReader reader = null;
@@ -775,7 +775,7 @@ public class OverseerTest extends SolrTestCaseJ4 {
 
   @Test
   public void testDoubleAssignment() throws Exception {
-    String zkDir = createTempDir("zkData").getAbsolutePath();
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
     
     ZkTestServer server = new ZkTestServer(zkDir);
     
@@ -839,7 +839,7 @@ public class OverseerTest extends SolrTestCaseJ4 {
 
   @Test
   public void testPlaceholders() throws Exception {
-    String zkDir = createTempDir("zkData").getAbsolutePath();
+    String zkDir = createTempDir("zkData").toFile().getAbsolutePath();
     
     ZkTestServer server = new ZkTestServer(zkDir);
     
@@ -887,7 +887,7 @@ public class OverseerTest extends SolrTestCaseJ4 {
   
   @Test
   public void testReplay() throws Exception{
-    String zkDir = createTempDir().getAbsolutePath() + File.separator
+    String zkDir = createTempDir().toFile().getAbsolutePath() + File.separator
         + "zookeeper/server1/data";
     ZkTestServer server = new ZkTestServer(zkDir);
     SolrZkClient zkClient = null;
@@ -928,7 +928,7 @@ public class OverseerTest extends SolrTestCaseJ4 {
       
       //submit to proper queue
       queue = Overseer.getInQueue(zkClient);
-      m = new ZkNodeProps(Overseer.QUEUE_OPERATION, "state",
+      m = new ZkNodeProps(Overseer.QUEUE_OPERATION, Overseer.OverseerAction.STATE.toLower(),
           ZkStateReader.BASE_URL_PROP, "http://127.0.0.1/solr",
           ZkStateReader.NODE_NAME_PROP, "node1",
           ZkStateReader.SHARD_ID_PROP, "s1",

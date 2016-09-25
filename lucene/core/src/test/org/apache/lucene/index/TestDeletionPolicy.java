@@ -272,8 +272,6 @@ public class TestDeletionPolicy extends LuceneTestCase {
     String fileName = IndexFileNames.fileNameFromGeneration(IndexFileNames.SEGMENTS,
                                                             "",
                                                             gen);
-    dir.deleteFile(IndexFileNames.SEGMENTS_GEN);
-
     boolean oneSecondResolution = true;
 
     while(gen > 0) {
@@ -287,8 +285,7 @@ public class TestDeletionPolicy extends LuceneTestCase {
         // if we are on a filesystem that seems to have only
         // 1 second resolution, allow +1 second in commit
         // age tolerance:
-        SegmentInfos sis = new SegmentInfos();
-        sis.read(dir, fileName);
+        SegmentInfos sis = SegmentInfos.readCommit(dir, fileName);
         long modTime = Long.parseLong(sis.getUserData().get("commitTime"));
         oneSecondResolution &= (modTime % 1000) == 0;
         final long leeway = (long) ((SECONDS + (oneSecondResolution ? 1.0:0.0))*1000);
@@ -377,7 +374,6 @@ public class TestDeletionPolicy extends LuceneTestCase {
 
       // Simplistic check: just verify all segments_N's still
       // exist, and, I can open a reader on each:
-      dir.deleteFile(IndexFileNames.SEGMENTS_GEN);
       long gen = SegmentInfos.getLastCommitGeneration(dir);
       while(gen > 0) {
         IndexReader reader = DirectoryReader.open(dir);
@@ -599,7 +595,6 @@ public class TestDeletionPolicy extends LuceneTestCase {
 
       // Simplistic check: just verify only the past N segments_N's still
       // exist, and, I can open a reader on each:
-      dir.deleteFile(IndexFileNames.SEGMENTS_GEN);
       long gen = SegmentInfos.getLastCommitGeneration(dir);
       for(int i=0;i<N+1;i++) {
         try {
@@ -702,7 +697,6 @@ public class TestDeletionPolicy extends LuceneTestCase {
       // exist, and, I can open a reader on each:
       long gen = SegmentInfos.getLastCommitGeneration(dir);
 
-      dir.deleteFile(IndexFileNames.SEGMENTS_GEN);
       int expectedCount = 0;
       
       rwReader.close();

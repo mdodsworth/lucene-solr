@@ -29,7 +29,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field.Store;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.StringField;
-import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriterConfig;
@@ -135,13 +135,11 @@ public class TestSortingMergePolicy extends LuceneTestCase {
     iw1.w.addDocument(doc);
     iw2.w.addDocument(doc);
 
-    if (defaultCodecSupportsFieldUpdates()) {
-      // update NDV of docs belonging to one term (covers many documents)
-      final long value = random().nextLong();
-      final String term = RandomPicks.randomFrom(random(), terms);
-      iw1.w.updateNumericDocValue(new Term("s", term), "ndv", value);
-      iw2.w.updateNumericDocValue(new Term("s", term), "ndv", value);
-    }
+    // update NDV of docs belonging to one term (covers many documents)
+    final long value = random().nextLong();
+    final String term = RandomPicks.randomFrom(random(), terms);
+    iw1.w.updateNumericDocValue(new Term("s", term), "ndv", value);
+    iw2.w.updateNumericDocValue(new Term("s", term), "ndv", value);
     
     iw1.forceMerge(1);
     iw2.forceMerge(1);
@@ -160,7 +158,7 @@ public class TestSortingMergePolicy extends LuceneTestCase {
     super.tearDown();
   }
 
-  private static void assertSorted(AtomicReader reader) throws IOException {
+  private static void assertSorted(LeafReader reader) throws IOException {
     final NumericDocValues ndv = reader.getNumericDocValues("ndv");
     for (int i = 1; i < reader.maxDoc(); ++i) {
       assertTrue("ndv(" + (i-1) + ")=" + ndv.get(i-1) + ",ndv(" + i + ")=" + ndv.get(i), ndv.get(i-1) <= ndv.get(i));
@@ -168,8 +166,8 @@ public class TestSortingMergePolicy extends LuceneTestCase {
   }
 
   public void testSortingMP() throws IOException {
-    final AtomicReader sortedReader1 = SortingAtomicReader.wrap(SlowCompositeReaderWrapper.wrap(reader), sort);
-    final AtomicReader sortedReader2 = SlowCompositeReaderWrapper.wrap(sortedReader);
+    final LeafReader sortedReader1 = SortingLeafReader.wrap(SlowCompositeReaderWrapper.wrap(reader), sort);
+    final LeafReader sortedReader2 = SlowCompositeReaderWrapper.wrap(sortedReader);
 
     assertSorted(sortedReader1);
     assertSorted(sortedReader2);

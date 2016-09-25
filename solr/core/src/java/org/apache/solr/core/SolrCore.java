@@ -17,6 +17,43 @@
 
 package org.apache.solr.core;
 
+import java.io.Closeable;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Writer;
+import java.lang.reflect.Constructor;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.NoSuchFileException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+import java.util.StringTokenizer;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
+
 import org.apache.commons.io.FileUtils;
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.index.DirectoryReader;
@@ -38,10 +75,11 @@ import org.apache.solr.common.util.ExecutorUtil;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.core.DirectoryFactory.DirContext;
+import org.apache.solr.handler.RequestHandlerBase;
 import org.apache.solr.handler.SnapPuller;
+import org.apache.solr.handler.SolrConfigHandler;
 import org.apache.solr.handler.UpdateRequestHandler;
 import org.apache.solr.handler.admin.ShowFileRequestHandler;
-import org.apache.solr.handler.component.AnalyticsComponent;
 import org.apache.solr.handler.component.DebugComponent;
 import org.apache.solr.handler.component.ExpandComponent;
 import org.apache.solr.handler.component.FacetComponent;
@@ -102,43 +140,6 @@ import org.slf4j.LoggerFactory;
 import org.xml.sax.SAXException;
 
 import javax.xml.parsers.ParserConfigurationException;
-
-import java.io.Closeable;
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Writer;
-import java.lang.reflect.Constructor;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.NoSuchFileException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Properties;
-import java.util.Set;
-import java.util.StringTokenizer;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
  *
@@ -506,7 +507,7 @@ public final class SolrCore implements SolrInfoMBean, Closeable {
                   logid
                       + "WARNING: Solr index directory '{}' is locked.  Unlocking...",
                   indexDir);
-              IndexWriter.unlock(dir);
+              dir.makeLock(IndexWriter.WRITE_LOCK_NAME).close();              
             } else {
               log.error(logid
                   + "Solr index directory '{}' is locked.  Throwing exception",
@@ -666,6 +667,7 @@ public final class SolrCore implements SolrInfoMBean, Closeable {
     this.solrConfig = null;
     this.startTime = System.currentTimeMillis();
     this.maxWarmingSearchers = 2;  // we don't have a config yet, just pick a number.
+    this.slowQueryThresholdMillis = -1;
     this.resourceLoader = null;
     this.updateHandler = null;
     this.isReloaded = true;
@@ -766,6 +768,7 @@ public final class SolrCore implements SolrInfoMBean, Closeable {
     this.dataDir = dataDir;
     this.startTime = System.currentTimeMillis();
     this.maxWarmingSearchers = config.maxWarmingSearchers;
+    this.slowQueryThresholdMillis = config.slowQueryThresholdMillis;
 
     booleanQueryMaxClauseCount();
   
@@ -806,6 +809,8 @@ public final class SolrCore implements SolrInfoMBean, Closeable {
       reqHandlers = new RequestHandlers(this);
       List<PluginInfo> implicitReqHandlerInfo = new ArrayList<>();
       UpdateRequestHandler.addImplicits(implicitReqHandlerInfo);
+      SolrConfigHandler.addImplicits(implicitReqHandlerInfo);
+
       reqHandlers.initHandlersFromConfig(solrConfig, implicitReqHandlerInfo);
 
       // Handle things that should eventually go away
@@ -1063,14 +1068,6 @@ public final class SolrCore implements SolrInfoMBean, Closeable {
     }
 
 
-    try {
-      infoRegistry.clear();
-    } catch (Throwable e) {
-      SolrException.log(log, e);
-      if (e instanceof Error) {
-        throw (Error) e;
-      }
-    }
 
     try {
       if (null != updateHandler) {
@@ -1119,6 +1116,15 @@ public final class SolrCore implements SolrInfoMBean, Closeable {
       closeSearcher();
     } catch (Throwable e) {
       SolrException.log(log,e);
+      if (e instanceof Error) {
+        throw (Error) e;
+      }
+    }
+
+    try {
+      infoRegistry.clear();
+    } catch (Throwable e) {
+      SolrException.log(log, e);
       if (e instanceof Error) {
         throw (Error) e;
       }
@@ -1218,7 +1224,7 @@ public final class SolrCore implements SolrInfoMBean, Closeable {
    * This function is thread safe.
    */
   public SolrRequestHandler getRequestHandler(String handlerName) {
-    return reqHandlers.get(handlerName);
+    return RequestHandlerBase.getRequestHandler(RequestHandlers.normalize(handlerName), reqHandlers.getRequestHandlers());
   }
 
   /**
@@ -1282,7 +1288,6 @@ public final class SolrCore implements SolrInfoMBean, Closeable {
     addIfNotPresent(components,StatsComponent.COMPONENT_NAME,StatsComponent.class);
     addIfNotPresent(components,DebugComponent.COMPONENT_NAME,DebugComponent.class);
     addIfNotPresent(components,RealTimeGetComponent.COMPONENT_NAME,RealTimeGetComponent.class);
-    addIfNotPresent(components,AnalyticsComponent.COMPONENT_NAME,AnalyticsComponent.class);
     addIfNotPresent(components,ExpandComponent.COMPONENT_NAME,ExpandComponent.class);
 
     return components;
@@ -1358,6 +1363,7 @@ public final class SolrCore implements SolrInfoMBean, Closeable {
   private Object searcherLock = new Object();  // the sync object for the searcher
   private ReentrantLock openSearcherLock = new ReentrantLock(true);     // used to serialize opens/reopens for absolute ordering
   private final int maxWarmingSearchers;  // max number of on-deck searchers allowed
+  private final int slowQueryThresholdMillis;  // threshold above which a query is considered slow
 
   private RefCounted<SolrIndexSearcher> realtimeSearcher;
   private Callable<DirectoryReader> newReaderCreator;
@@ -1528,8 +1534,7 @@ public final class SolrCore implements SolrInfoMBean, Closeable {
         // (caches take a little while to instantiate)
         final boolean useCaches = !realtime;
         final String newName = realtime ? "realtime" : "main";
-        tmp = new SolrIndexSearcher(this, newIndexDir, getLatestSchema(), 
-                                    getSolrConfig().indexConfig, newName,
+        tmp = new SolrIndexSearcher(this, newIndexDir, getLatestSchema(), newName,
                                     newReader, true, useCaches, true, directoryFactory);
 
       } else {
@@ -1540,7 +1545,7 @@ public final class SolrCore implements SolrInfoMBean, Closeable {
           // so that we pick up any uncommitted changes and so we don't go backwards
           // in time on a core reload
           DirectoryReader newReader = newReaderCreator.call();
-          tmp = new SolrIndexSearcher(this, newIndexDir, getLatestSchema(), getSolrConfig().indexConfig, 
+          tmp = new SolrIndexSearcher(this, newIndexDir, getLatestSchema(), 
               (realtime ? "realtime":"main"), newReader, true, !realtime, true, directoryFactory);
         } else if (solrConfig.nrtMode) {
           RefCounted<IndexWriter> writer = getUpdateHandler().getSolrCoreState().getIndexWriter(this);
@@ -1550,7 +1555,7 @@ public final class SolrCore implements SolrInfoMBean, Closeable {
           } finally {
             writer.decref();
           }
-          tmp = new SolrIndexSearcher(this, newIndexDir, getLatestSchema(), getSolrConfig().indexConfig, 
+          tmp = new SolrIndexSearcher(this, newIndexDir, getLatestSchema(),
               (realtime ? "realtime":"main"), newReader, true, !realtime, true, directoryFactory);
         } else {
          // normal open that happens at startup
@@ -1985,8 +1990,17 @@ public final class SolrCore implements SolrInfoMBean, Closeable {
     handler.handleRequest(req,rsp);
     postDecorateResponse(handler, req, rsp);
 
-    if (log.isInfoEnabled() && rsp.getToLog().size() > 0) {
-      log.info(rsp.getToLogAsString(logid));
+    if (rsp.getToLog().size() > 0) {
+      if (log.isInfoEnabled()) {
+        log.info(rsp.getToLogAsString(logid));
+      }
+
+      if (log.isWarnEnabled()) {
+        final int qtime = (int)(rsp.getEndTime() - req.getStartTime());
+        if (slowQueryThresholdMillis >= 0 && qtime >= slowQueryThresholdMillis) {
+          log.warn("slow: " + rsp.getToLogAsString(logid));
+        }
+      }
     }
   }
 

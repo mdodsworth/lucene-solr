@@ -17,17 +17,15 @@ package org.apache.solr.util;
  * limitations under the License.
  */
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.net.ConnectException;
 import java.net.SocketException;
 import java.net.URL;
-import java.text.DateFormat;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Date;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -48,9 +46,16 @@ import org.apache.commons.cli.ParseException;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.NoHttpResponseException;
+import org.apache.http.StatusLine;
+import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.HttpClient;
+import org.apache.http.client.HttpResponseException;
+import org.apache.http.client.ResponseHandler;
 import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.utils.URIBuilder;
 import org.apache.http.conn.ConnectTimeoutException;
+import org.apache.http.impl.client.BasicResponseHandler;
+import org.apache.http.util.EntityUtils;
 import org.apache.log4j.Level;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
@@ -60,7 +65,9 @@ import org.apache.solr.client.solrj.impl.CloudSolrServer;
 import org.apache.solr.client.solrj.impl.HttpClientUtil;
 import org.apache.solr.client.solrj.impl.HttpSolrServer;
 import org.apache.solr.client.solrj.response.QueryResponse;
+import org.apache.solr.cloud.ZkController;
 import org.apache.solr.common.SolrException;
+import org.apache.solr.common.cloud.ClusterState;
 import org.apache.solr.common.cloud.Replica;
 import org.apache.solr.common.cloud.Slice;
 import org.apache.solr.common.cloud.ZkCoreNodeProps;
@@ -195,7 +202,9 @@ public class SolrCLI {
       return new StatusTool();
     else if ("api".equals(toolType))
       return new ApiTool();
-    
+    else if ("create_collection".equals(toolType))
+      return new CreateCollectionTool();
+
     // If you add a built-in tool to this class, add it here to avoid
     // classpath scanning
 
@@ -213,7 +222,8 @@ public class SolrCLI {
     formatter.printHelp("healthcheck", getToolOptions(new HealthcheckTool()));
     formatter.printHelp("status", getToolOptions(new StatusTool()));
     formatter.printHelp("api", getToolOptions(new ApiTool()));
-    
+    formatter.printHelp("create_collection", getToolOptions(new CreateCollectionTool()));
+
     List<Class<Tool>> toolClasses = findToolClassesInPackage("org.apache.solr.util");
     for (Class<Tool> next : toolClasses) {
       Tool tool = next.newInstance();
@@ -313,7 +323,7 @@ public class SolrCLI {
       }
       
       for (String classInPackage : classes) {
-        Class theClass = Class.forName(classInPackage);
+        Class<?> theClass = Class.forName(classInPackage);
         if (Tool.class.isAssignableFrom(theClass)) {
           toolClasses.add((Class<Tool>) theClass);
         }
@@ -420,105 +430,45 @@ public class SolrCLI {
     
     return json;
   }
+
+  private static class SolrResponseHandler implements ResponseHandler<Map<String,Object>> {
+    public Map<String,Object> handleResponse(HttpResponse response) throws ClientProtocolException, IOException {
+      HttpEntity entity = response.getEntity();
+      if (entity != null) {
+        Object resp = ObjectBuilder.getVal(new JSONParser(EntityUtils.toString(entity)));
+        if (resp != null && resp instanceof Map) {
+          return (Map<String,Object>)resp;
+        } else {
+          throw new ClientProtocolException("Expected JSON object in response but received "+ resp);
+        }
+      } else {
+        StatusLine statusLine = response.getStatusLine();
+        throw new HttpResponseException(statusLine.getStatusCode(), statusLine.getReasonPhrase());
+      }
+    }
+  }
   
   /**
    * Utility function for sending HTTP GET request to Solr and then doing some
    * validation of the response.
    */
-  @SuppressWarnings({"unchecked", "rawtypes"})
+  @SuppressWarnings({"unchecked"})
   public static Map<String,Object> getJson(HttpClient httpClient, String getUrl) throws Exception {
-    Map<String,Object> json = null;
-
     // ensure we're requesting JSON back from Solr
-    URL url = new URL(getUrl);
-    String queryString = url.getQuery();
-    if (queryString != null) {
-      if (queryString.indexOf("wt=json") == -1) {
-        getUrl += "&wt=json";
-      }
-    } else {
-      getUrl += "?wt=json";      
-    }
-       
-    // Prepare a request object
-    HttpGet httpget = new HttpGet(getUrl);
-    
-    // Execute the request
-    HttpResponse response = httpClient.execute(httpget);
-    
-    // Get hold of the response entity
-    HttpEntity entity = response.getEntity();
-    if (response.getStatusLine().getStatusCode() != 200) {
-      StringBuilder body = new StringBuilder();
-      if (entity != null) {
-        InputStream instream = entity.getContent();
-        String line;
-        try {
-          BufferedReader reader = 
-              new BufferedReader(new InputStreamReader(instream, "UTF-8"));
-          while ((line = reader.readLine()) != null) {
-            body.append(line);
-          }
-        } catch (Exception ignore) {
-          // squelch it - just trying to compose an error message here
-        } finally {
-          instream.close();
-        }
-      }
-      throw new Exception("GET request [" + getUrl + "] failed due to: "
-          + response.getStatusLine() + ": " + body);
-    }
-    
-    // If the response does not enclose an entity, there is no need
-    // to worry about connection release
-    if (entity != null) {
-      InputStreamReader isr = null;
-      try {
-        isr = new InputStreamReader(entity.getContent(), "UTF-8");
-        Object resp = 
-            ObjectBuilder.getVal(new JSONParser(isr));
-        if (resp != null && resp instanceof Map) {
-          json = (Map<String,Object>)resp;
-        } else {
-          throw new SolrServerException("Expected JSON object in response from "+
-              getUrl+" but received "+ resp);
-        }
-      } catch (RuntimeException ex) {
-        // In case of an unexpected exception you may want to abort
-        // the HTTP request in order to shut down the underlying
-        // connection and release it back to the connection manager.
-        httpget.abort();
-        throw ex;
-      } finally {
-        // Closing the input stream will trigger connection release
-        isr.close();
-      }
-    }
-    
-    // lastly check the response JSON from Solr to see if it is an error
-    int statusCode = -1;
-    Map responseHeader = (Map)json.get("responseHeader");
-    if (responseHeader != null) {
-      Long status = (Long)responseHeader.get("status");
-      if (status != null)
-        statusCode = status.intValue();
-    }
-    
-    if (statusCode == -1)
+    HttpGet httpGet = new HttpGet(new URIBuilder(getUrl).setParameter("wt", "json").build());
+    // make the request and get back a parsed JSON object
+    Map<String,Object> json = httpClient.execute(httpGet, new SolrResponseHandler());
+    // check the response JSON from Solr to see if it is an error
+    Long statusCode = asLong("/responseHeader/status", json);
+    if (statusCode == -1) {
       throw new SolrServerException("Unable to determine outcome of GET request to: "+
-        getUrl+"! Response: "+json);
-    
-    if (statusCode != 0) {      
-      String errMsg = null;
-      Map error = (Map) json.get("error");
-      if (error != null) {
-        errMsg = (String)error.get("msg");
-      }
-      
-      if (errMsg == null) errMsg = String.valueOf(json);
+          getUrl+"! Response: "+json);
+    } else if (statusCode != 0) {
+      String errMsg = asString("/error/msg", json);
+      if (errMsg == null)
+        errMsg = String.valueOf(json);
       throw new SolrServerException("Request to "+getUrl+" failed due to: "+errMsg);
     }
-
     return json;
   }  
 
@@ -526,36 +476,14 @@ public class SolrCLI {
    * Helper function for reading a String value from a JSON Object tree. 
    */
   public static String asString(String jsonPath, Map<String,Object> json) {
-    String str = null;
-    Object obj = atPath(jsonPath, json);
-    if (obj != null) {
-      if (obj instanceof String) {
-        str = (String)obj;
-      } else {
-        // no ok if it's not null and of a different type
-        throw new IllegalStateException("Expected a String at path "+
-           jsonPath+" but found "+obj+" instead! "+json);
-      }
-    } // it's ok if it is null
-    return str;
+    return pathAs(String.class, jsonPath, json);
   }
 
   /**
    * Helper function for reading a Long value from a JSON Object tree. 
    */
   public static Long asLong(String jsonPath, Map<String,Object> json) {
-    Long num = null;
-    Object obj = atPath(jsonPath, json);
-    if (obj != null) {
-      if (obj instanceof Long) {
-        num = (Long)obj;
-      } else {
-        // no ok if it's not null and of a different type
-        throw new IllegalStateException("Expected a Long at path "+
-           jsonPath+" but found "+obj+" instead! "+json);
-      }
-    } // it's ok if it is null
-    return num;
+    return pathAs(Long.class, jsonPath, json);
   }
   
   /**
@@ -563,18 +491,7 @@ public class SolrCLI {
    */
   @SuppressWarnings("unchecked")
   public static List<String> asList(String jsonPath, Map<String,Object> json) {
-    List<String> list = null;
-    Object obj = atPath(jsonPath, json);
-    if (obj != null) {
-      if (obj instanceof List) {
-        list = (List<String>)obj;
-      } else {
-        // no ok if it's not null and of a different type
-        throw new IllegalStateException("Expected a List at path "+
-           jsonPath+" but found "+obj+" instead! "+json);
-      }
-    } // it's ok if it is null
-    return  list;
+    return pathAs(List.class, jsonPath, json);
   }
   
   /**
@@ -582,18 +499,23 @@ public class SolrCLI {
    */
   @SuppressWarnings("unchecked")
   public static Map<String,Object> asMap(String jsonPath, Map<String,Object> json) {
-    Map<String,Object> map = null;
+    return pathAs(Map.class, jsonPath, json);
+  }
+  
+  @SuppressWarnings("unchecked")
+  public static <T> T pathAs(Class<T> clazz, String jsonPath, Map<String,Object> json) {
+    T val = null;
     Object obj = atPath(jsonPath, json);
     if (obj != null) {
-      if (obj instanceof Map) {
-        map = (Map<String,Object>)obj;
+      if (clazz.isAssignableFrom(obj.getClass())) {
+        val = (T) obj;
       } else {
         // no ok if it's not null and of a different type
-        throw new IllegalStateException("Expected a Map at path "+
+        throw new IllegalStateException("Expected a " + clazz.getName() + " at path "+
            jsonPath+" but found "+obj+" instead! "+json);
       }
     } // it's ok if it is null
-    return map;
+    return val;
   }
   
   /**
@@ -661,40 +583,40 @@ public class SolrCLI {
       String solrUrl = cli.getOptionValue("solr", DEFAULT_SOLR_URL);
       if (!solrUrl.endsWith("/"))
         solrUrl += "/";
-      
+
       int exitCode = 0;
       String systemInfoUrl = solrUrl+"admin/info/system";
       HttpClient httpClient = getHttpClient();
-      try {        
+      try {
         // hit Solr to get system info
         Map<String,Object> systemInfo = getJson(httpClient, systemInfoUrl, 2);
-        
+
         // convert raw JSON into user-friendly output
-        Map<String,Object> status = 
+        Map<String,Object> status =
             reportStatus(solrUrl, systemInfo, httpClient);
-        
+
         // pretty-print the status to stdout
         CharArr arr = new CharArr();
         new JSONWriter(arr, 2).write(status);
         System.out.println(arr.toString());
-        
+
       } catch (Exception exc) {
         if (checkCommunicationError(exc)) {
           // this is not actually an error from the tool as it's ok if Solr is not online.
           System.err.println("Solr at "+solrUrl+" not online.");
         } else {
           System.err.print("Failed to get system information from "+solrUrl+" due to: ");
-          exc.printStackTrace(System.err);          
+          exc.printStackTrace(System.err);
           exitCode = 1;
         }
       } finally {
-        closeHttpClient(httpClient);        
+        closeHttpClient(httpClient);
       }
-            
+
       return exitCode;
-    }    
+    }
     
-    protected Map<String,Object> reportStatus(String solrUrl, Map<String,Object> info, HttpClient httpClient) 
+    public Map<String,Object> reportStatus(String solrUrl, Map<String,Object> info, HttpClient httpClient)
         throws Exception
     {
       Map<String,Object> status = new LinkedHashMap<String,Object>();
@@ -709,26 +631,7 @@ public class SolrCLI {
       
       // if this is a Solr in solrcloud mode, gather some basic cluster info
       if ("solrcloud".equals(info.get("mode"))) {
-        
-        // TODO: Need a better way to get the zkHost from a running server
-        // as it can be set from solr.xml vs. on the command-line
-        String zkHost = null;
-        List<String> args = asList("/jvm/jmx/commandLineArgs", info);
-        if (args != null) {
-          for (String arg : args) {
-            if (arg.startsWith("-DzkHost=")) {
-              zkHost = arg.substring("-DzkHost=".length());
-              break;
-            } else if (arg.startsWith("-DzkRun")) {
-              URL serverUrl = new URL(solrUrl);
-              String host = serverUrl.getHost();
-              int port = serverUrl.getPort();
-              zkHost = host+":"+(port+1000)+" (embedded)";
-              break;
-            }
-          }
-        }
-        
+        String zkHost = (String)info.get("zkHost");
         status.put("cloud", getCloudStatus(httpClient, solrUrl, zkHost));
       }
       
@@ -797,6 +700,195 @@ public class SolrCLI {
       return 0;
     }    
   } // end ApiTool class
+
+  /**
+   * Supports create_collection command in the bin/solr script.
+   */
+  public static class CreateCollectionTool implements Tool {
+
+    private static final String DEFAULT_CONFIG_SET = "data_driven_schema_configs";
+
+    @Override
+    public String getName() {
+      return "create_collection";
+    }
+
+    @SuppressWarnings("static-access")
+    @Override
+    public Option[] getOptions() {
+      return new Option[] {
+          OptionBuilder
+              .withArgName("HOST")
+              .hasArg()
+              .isRequired(false)
+              .withDescription("Address of the Zookeeper ensemble; defaults to: "+ZK_HOST)
+              .create("zkHost"),
+          OptionBuilder
+              .withArgName("HOST")
+              .hasArg()
+              .isRequired(false)
+              .withDescription("Base Solr URL, which can be used to determine the zkHost if that's not known")
+              .create("solrUrl"),
+          OptionBuilder
+              .withArgName("NAME")
+              .hasArg()
+              .isRequired(true)
+              .withDescription("Name of collection to create.")
+              .create("name"),
+          OptionBuilder
+              .withArgName("#")
+              .hasArg()
+              .isRequired(false)
+              .withDescription("Number of shards; default is 1")
+              .create("shards"),
+          OptionBuilder
+              .withArgName("#")
+              .hasArg()
+              .isRequired(false)
+              .withDescription("Number of copies of each document across the collection (replicas per shard); default is 1")
+              .create("replicationFactor"),
+          OptionBuilder
+              .withArgName("#")
+              .hasArg()
+              .isRequired(false)
+              .withDescription("Maximum number of shards per Solr node; default is determined based on the number of shards, replication factor, and live nodes.")
+              .create("maxShardsPerNode"),
+          OptionBuilder
+              .withArgName("NAME")
+              .hasArg()
+              .isRequired(false)
+              .withDescription("Name of the configuration for this collection; default is "+DEFAULT_CONFIG_SET)
+              .create("config"),
+          OptionBuilder
+              .withArgName("DIR")
+              .hasArg()
+              .isRequired(true)
+              .withDescription("Path to configsets directory on the local system.")
+              .create("configsetsDir")
+      };
+    }
+
+    public int runTool(CommandLine cli) throws Exception {
+
+      // quiet down the ZK logging for cli tools
+      LogManager.getLogger("org.apache.zookeeper").setLevel(Level.ERROR);
+      LogManager.getLogger("org.apache.solr.common.cloud").setLevel(Level.WARN);
+
+      String zkHost = cli.getOptionValue("zkHost");
+      if (zkHost == null) {
+        // find it using the localPort
+        String solrUrl = cli.getOptionValue("solrUrl");
+        if (solrUrl == null)
+          throw new IllegalStateException(
+              "Must provide either the -zkHost or -solrUrl parameters to use the create_collection command!");
+
+        if (!solrUrl.endsWith("/"))
+          solrUrl += "/";
+
+        String systemInfoUrl = solrUrl+"admin/info/system";
+        HttpClient httpClient = getHttpClient();
+        try {
+          // hit Solr to get system info
+          Map<String,Object> systemInfo = getJson(httpClient, systemInfoUrl, 2);
+
+          // convert raw JSON into user-friendly output
+          StatusTool statusTool = new StatusTool();
+          Map<String,Object> status = statusTool.reportStatus(solrUrl, systemInfo, httpClient);
+
+          Map<String,Object> cloud = (Map<String, Object>)status.get("cloud");
+          if (cloud == null)
+            throw new IllegalArgumentException("Solr server at "+solrUrl+" not running in SolrCloud mode!");
+
+          String zookeeper = (String) cloud.get("ZooKeeper");
+          if (zookeeper.endsWith("(embedded)")) {
+            zookeeper = zookeeper.substring(0,zookeeper.length()-"(embedded)".length());
+          }
+          zkHost = zookeeper;
+        } finally {
+          closeHttpClient(httpClient);
+        }
+      }
+
+      CloudSolrServer cloudSolrServer = null;
+      try {
+        cloudSolrServer = new CloudSolrServer(zkHost);
+        System.out.println("Connecting to ZooKeeper at "+zkHost);
+        cloudSolrServer.connect();
+        runCloudTool(cloudSolrServer, cli);
+      } finally {
+        if (cloudSolrServer != null) {
+          try {
+            cloudSolrServer.shutdown();
+          } catch (Exception ignore) {}
+        }
+      }
+
+      return 0;
+    }
+
+    protected void runCloudTool(CloudSolrServer cloudSolrServer, CommandLine cli) throws Exception {
+      Set<String> liveNodes = cloudSolrServer.getZkStateReader().getClusterState().getLiveNodes();
+      if (liveNodes.isEmpty())
+        throw new IllegalStateException("No live nodes found! Cannot create a collection until " +
+            "there is at least 1 live node in the cluster.");
+      String firstLiveNode = liveNodes.iterator().next();
+
+      // build a URL to create the collection
+      int numShards = optionAsInt(cli, "shards", 1);
+      int replicationFactor = optionAsInt(cli, "replicationFactor", 1);
+      int maxShardsPerNode = -1;
+
+      if (cli.hasOption("maxShardsPerNode")) {
+        maxShardsPerNode = Integer.parseInt(cli.getOptionValue("maxShardsPerNode"));
+      } else {
+        // need number of live nodes to determine maxShardsPerNode if it is not set
+        int numNodes = liveNodes.size();
+        maxShardsPerNode = ((numShards*replicationFactor)+numNodes-1)/numNodes;
+      }
+
+      String configSet = cli.getOptionValue("config", DEFAULT_CONFIG_SET);
+      // first, test to see if that config exists in ZK
+      if (!cloudSolrServer.getZkStateReader().getZkClient().exists("/configs/"+configSet, true)) {
+        File configsetsDir = new File(cli.getOptionValue("configsetsDir"));
+        if (!configsetsDir.isDirectory())
+          throw new FileNotFoundException(configsetsDir.getAbsolutePath()+" not found!");
+
+        // upload the configset if it exists
+        File configSetDir = new File(configsetsDir, configSet);
+        if (!configSetDir.isDirectory())
+          throw new FileNotFoundException("Specified config "+configSet+
+              " not found in "+configsetsDir.getAbsolutePath());
+
+        File confDir = new File(configSetDir,"conf");
+        System.out.println("Uploading "+confDir.getAbsolutePath()+
+            " for config "+configSet+" to ZooKeeper at "+cloudSolrServer.getZkHost());
+        ZkController.uploadConfigDir(cloudSolrServer.getZkStateReader().getZkClient(), confDir, configSet);
+      }
+
+      String baseUrl = cloudSolrServer.getZkStateReader().getBaseUrlForNodeName(firstLiveNode);
+      String collectionName = cli.getOptionValue("name");
+      String createCollectionUrl =
+          String.format(Locale.ROOT,
+              "%s/admin/collections?action=CREATE&name=%s&numShards=%d&replicationFactor=%d&maxShardsPerNode=%d&collection.configName=%s",
+              baseUrl,
+              collectionName,
+              numShards,
+              replicationFactor,
+              maxShardsPerNode,
+              configSet);
+
+      System.out.println("Creating new collection '"+collectionName+"' using command:\n\n"+createCollectionUrl+"\n");
+
+      Map<String,Object> json = getJson(createCollectionUrl);
+      CharArr arr = new CharArr();
+      new JSONWriter(arr, 2).write(json);
+      System.out.println(arr.toString());
+    }
+
+    protected int optionAsInt(CommandLine cli, String option, int defaultVal) {
+      return Integer.parseInt(cli.getOptionValue(option, String.valueOf(defaultVal)));
+    }
+  } // end CreateCollectionTool class
 
   private static final long MS_IN_MIN = 60 * 1000L;
   private static final long MS_IN_HOUR = MS_IN_MIN * 60L;
@@ -965,7 +1057,10 @@ public class SolrCLI {
       log.info("Running healthcheck for "+collection);
       
       ZkStateReader zkStateReader = cloudSolrServer.getZkStateReader();
-      Collection<Slice> slices = zkStateReader.getClusterState().getSlices(collection);
+
+      ClusterState clusterState = zkStateReader.getClusterState();
+      Set<String> liveNodes = clusterState.getLiveNodes();
+      Collection<Slice> slices = clusterState.getSlices(collection);
       if (slices == null)
         throw new IllegalArgumentException("Collection "+collection+" not found!");
       
@@ -1004,39 +1099,45 @@ public class SolrCLI {
           ZkCoreNodeProps replicaCoreProps = new ZkCoreNodeProps(r);
           String coreUrl = replicaCoreProps.getCoreUrl();
           boolean isLeader = coreUrl.equals(leaderUrl);
-          
-          // query this replica directly to get doc count and assess health
-          HttpSolrServer solr = new HttpSolrServer(coreUrl);
-          String solrUrl = solr.getBaseURL();
-          q = new SolrQuery("*:*");
-          q.setRows(0);
-          q.set("distrib", "false");          
-          try {
-            qr = solr.query(q);
-            numDocs = qr.getResults().getNumFound();
-            
-            int lastSlash = solrUrl.lastIndexOf('/');            
-            String systemInfoUrl = solrUrl.substring(0,lastSlash)+"/admin/info/system";
-            Map<String,Object> info = getJson(solr.getHttpClient(), systemInfoUrl, 2);
-            uptime = uptime(asLong("/jvm/jmx/upTimeMS", info));            
-            String usedMemory = asString("/jvm/memory/used", info);
-            String totalMemory = asString("/jvm/memory/total", info);
-            memory = usedMemory+" of "+totalMemory;
-            
-            // if we get here, we can trust the state
-            replicaStatus = replicaCoreProps.getState();                                                                      
-          } catch (Exception exc) {
-            log.error("ERROR: " + exc + " when trying to reach: " + solrUrl);
 
-            if (checkCommunicationError(exc)) {
-              replicaStatus = "down";
-            } else {
-              replicaStatus = "error: "+exc;
-            }            
-          } finally {
-            solr.shutdown();
+          // if replica's node is not live, it's status is DOWN
+          String nodeName = replicaCoreProps.getNodeName();
+          if (nodeName == null || !liveNodes.contains(nodeName)) {
+            replicaStatus = ZkStateReader.DOWN;
+          } else {
+            // query this replica directly to get doc count and assess health
+            HttpSolrServer solr = new HttpSolrServer(coreUrl);
+            String solrUrl = solr.getBaseURL();
+            q = new SolrQuery("*:*");
+            q.setRows(0);
+            q.set("distrib", "false");
+            try {
+              qr = solr.query(q);
+              numDocs = qr.getResults().getNumFound();
+
+              int lastSlash = solrUrl.lastIndexOf('/');
+              String systemInfoUrl = solrUrl.substring(0,lastSlash)+"/admin/info/system";
+              Map<String,Object> info = getJson(solr.getHttpClient(), systemInfoUrl, 2);
+              uptime = uptime(asLong("/jvm/jmx/upTimeMS", info));
+              String usedMemory = asString("/jvm/memory/used", info);
+              String totalMemory = asString("/jvm/memory/total", info);
+              memory = usedMemory+" of "+totalMemory;
+
+              // if we get here, we can trust the state
+              replicaStatus = replicaCoreProps.getState();
+            } catch (Exception exc) {
+              log.error("ERROR: " + exc + " when trying to reach: " + solrUrl);
+
+              if (checkCommunicationError(exc)) {
+                replicaStatus = "down";
+              } else {
+                replicaStatus = "error: "+exc;
+              }
+            } finally {
+              solr.shutdown();
+            }
           }
-          
+
           replicaList.add(new ReplicaHealth(shardName, r.getName(), coreUrl, 
               replicaStatus, numDocs, isLeader, uptime, memory));          
         }

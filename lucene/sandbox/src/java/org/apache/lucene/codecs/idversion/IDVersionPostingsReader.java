@@ -18,6 +18,7 @@ package org.apache.lucene.codecs.idversion;
  */
 
 import java.io.IOException;
+import java.util.Collections;
 
 import org.apache.lucene.codecs.BlockTermState;
 import org.apache.lucene.codecs.CodecUtil;
@@ -25,20 +26,22 @@ import org.apache.lucene.codecs.PostingsReaderBase;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.util.BitUtil;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.Bits;
 
 final class IDVersionPostingsReader extends PostingsReaderBase {
 
   @Override
-  public void init(IndexInput termsIn) throws IOException {
+  public void init(IndexInput termsIn, SegmentReadState state) throws IOException {
     // Make sure we are talking to the matching postings writer
-    CodecUtil.checkHeader(termsIn,
-                          IDVersionPostingsWriter.TERMS_CODEC,
-                          IDVersionPostingsWriter.VERSION_START,
-                          IDVersionPostingsWriter.VERSION_CURRENT);
+    CodecUtil.checkIndexHeader(termsIn,
+                                 IDVersionPostingsWriter.TERMS_CODEC,
+                                 IDVersionPostingsWriter.VERSION_START,
+                                 IDVersionPostingsWriter.VERSION_CURRENT,
+                                 state.segmentInfo.getId(), state.segmentSuffix);
   }
 
   @Override
@@ -95,8 +98,18 @@ final class IDVersionPostingsReader extends PostingsReaderBase {
   public long ramBytesUsed() {
     return 0;
   }
+  
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    return Collections.emptyList();
+  }
 
   @Override
   public void checkIntegrity() throws IOException {
+  }
+
+  @Override
+  public String toString() {
+    return getClass().getSimpleName();
   }
 }

@@ -29,7 +29,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.document.StringField;
-import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.SortedSetDocValues;
@@ -43,16 +43,14 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
-import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 
 /** tests BooleanScorer2's minShouldMatch */
-@SuppressCodecs({"Lucene40", "Lucene41"})
 public class TestMinShouldMatch2 extends LuceneTestCase {
   static Directory dir;
   static DirectoryReader r;
-  static AtomicReader reader;
+  static LeafReader reader;
   static IndexSearcher searcher;
   
   static final String alwaysTerms[] = { "a" };
@@ -279,7 +277,7 @@ public class TestMinShouldMatch2 extends LuceneTestCase {
     
     double score = Float.NaN;
 
-    SlowMinShouldMatchScorer(BooleanWeight weight, AtomicReader reader, IndexSearcher searcher) throws IOException {
+    SlowMinShouldMatchScorer(BooleanWeight weight, LeafReader reader, IndexSearcher searcher) throws IOException {
       super(weight);
       this.dv = reader.getSortedSetDocValues("dv");
       this.maxDoc = reader.maxDoc();

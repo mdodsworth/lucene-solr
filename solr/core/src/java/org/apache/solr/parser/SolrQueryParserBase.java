@@ -41,8 +41,8 @@ import org.apache.lucene.util.QueryBuilder;
 import org.apache.lucene.util.ToStringUtils;
 import org.apache.lucene.util.Version;
 import org.apache.lucene.util.automaton.Automata;
-import org.apache.lucene.util.automaton.Operations;
 import org.apache.lucene.util.automaton.Automaton;
+import org.apache.lucene.util.automaton.Operations;
 import org.apache.solr.analysis.ReversedWildcardFilterFactory;
 import org.apache.solr.analysis.TokenizerChain;
 import org.apache.solr.common.SolrException;
@@ -78,7 +78,7 @@ public abstract class SolrQueryParserBase extends QueryBuilder {
   /** The default operator that parser uses to combine query terms */
   Operator operator = OR_OPERATOR;
 
-  MultiTermQuery.RewriteMethod multiTermRewriteMethod = MultiTermQuery.CONSTANT_SCORE_AUTO_REWRITE_DEFAULT;
+  MultiTermQuery.RewriteMethod multiTermRewriteMethod = MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE;
   boolean allowLeadingWildcard = true;
 
   String defaultField;
@@ -294,7 +294,7 @@ public abstract class SolrQueryParserBase extends QueryBuilder {
 
 
   /**
-   * By default QueryParser uses {@link org.apache.lucene.search.MultiTermQuery#CONSTANT_SCORE_AUTO_REWRITE_DEFAULT}
+   * By default QueryParser uses {@link org.apache.lucene.search.MultiTermQuery#CONSTANT_SCORE_FILTER_REWRITE}
    * when creating a PrefixQuery, WildcardQuery or RangeQuery. This implementation is generally preferable because it
    * a) Runs faster b) Does not have the scarcity of terms unduly influence score
    * c) avoids any "TooManyBooleanClauses" exception.
@@ -788,7 +788,7 @@ public abstract class SolrQueryParserBase extends QueryBuilder {
             Automata.makeChar(factory.getMarkerChar()),
             Automata.makeAnyString());
         // subtract these away
-        automaton = Operations.minus(automaton, falsePositives);
+        automaton = Operations.minus(automaton, falsePositives, Operations.DEFAULT_MAX_DETERMINIZED_STATES);
       }
       return new AutomatonQuery(term, automaton) {
         // override toString so its completely transparent

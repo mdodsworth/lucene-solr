@@ -17,16 +17,19 @@
 
 package org.apache.lucene.search.grouping;
 
+import java.io.IOException;
+import java.util.*;
+
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.*;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexOptions;
+import org.apache.lucene.index.IndexReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.MultiDocValues;
 import org.apache.lucene.index.NumericDocValues;
-import org.apache.lucene.index.ReaderUtil;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.RandomIndexWriter;
-import org.apache.lucene.index.IndexReaderContext;
+import org.apache.lucene.index.ReaderUtil;
 import org.apache.lucene.index.SlowCompositeReaderWrapper;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.queries.function.ValueSource;
@@ -41,13 +44,9 @@ import org.apache.lucene.search.grouping.term.TermSecondPassGroupingCollector;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.mutable.MutableValue;
 import org.apache.lucene.util.mutable.MutableValueStr;
-
-import java.io.IOException;
-import java.util.*;
 
 // TODO
 //   - should test relevance sort too
@@ -55,7 +54,6 @@ import java.util.*;
 //   - test ties
 //   - test compound sort
 
-@SuppressCodecs({"Lucene40", "Lucene41", "Lucene42"}) // we need missing support... i think?
 public class TestGrouping extends LuceneTestCase {
 
   public void testBasic() throws Exception {
@@ -553,7 +551,7 @@ public class TestGrouping extends LuceneTestCase {
     final List<List<Document>> updateDocs = new ArrayList<>();
 
     FieldType groupEndType = new FieldType(StringField.TYPE_NOT_STORED);
-    groupEndType.setIndexOptions(IndexOptions.DOCS_ONLY);
+    groupEndType.setIndexOptions(IndexOptions.DOCS);
     groupEndType.setOmitNorms(true);
 
     //System.out.println("TEST: index groups");
@@ -604,7 +602,7 @@ public class TestGrouping extends LuceneTestCase {
 
     public ShardState(IndexSearcher s) {
       final IndexReaderContext ctx = s.getTopReaderContext();
-      final List<AtomicReaderContext> leaves = ctx.leaves();
+      final List<LeafReaderContext> leaves = ctx.leaves();
       subSearchers = new ShardSearcher[leaves.size()];
       for(int searcherIDX=0;searcherIDX<subSearchers.length;searcherIDX++) {
         subSearchers[searcherIDX] = new ShardSearcher(leaves.get(searcherIDX), ctx);
@@ -1296,9 +1294,9 @@ public class TestGrouping extends LuceneTestCase {
   }
 
   private static class ShardSearcher extends IndexSearcher {
-    private final List<AtomicReaderContext> ctx;
+    private final List<LeafReaderContext> ctx;
 
-    public ShardSearcher(AtomicReaderContext ctx, IndexReaderContext parent) {
+    public ShardSearcher(LeafReaderContext ctx, IndexReaderContext parent) {
       super(parent);
       this.ctx = Collections.singletonList(ctx);
     }

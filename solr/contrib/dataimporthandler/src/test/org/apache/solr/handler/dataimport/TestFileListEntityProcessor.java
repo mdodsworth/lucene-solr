@@ -24,6 +24,7 @@ import org.junit.Test;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
@@ -40,7 +41,7 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
   @Test
   @SuppressWarnings("unchecked")
   public void testSimple() throws IOException {
-    File tmpdir = createTempDir();
+    File tmpdir = createTempDir().toFile();
 
     createFile(tmpdir, "a.xml", "a.xml".getBytes(StandardCharsets.UTF_8), false);
     createFile(tmpdir, "b.xml", "b.xml".getBytes(StandardCharsets.UTF_8), false);
@@ -64,8 +65,8 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
   
   @Test
   public void testBiggerSmallerFiles() throws IOException {
-    File tmpdir = File.createTempFile("test", "tmp", createTempDir());
-    tmpdir.delete();
+    File tmpdir = File.createTempFile("test", "tmp", createTempDir().toFile());
+    Files.delete(tmpdir.toPath());
     tmpdir.mkdir();
 
     long minLength = Long.MAX_VALUE;
@@ -134,7 +135,7 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
 
   @Test
   public void testNTOT() throws IOException {
-    File tmpdir = createTempDir();
+    File tmpdir = createTempDir().toFile();
 
     createFile(tmpdir, "a.xml", "a.xml".getBytes(StandardCharsets.UTF_8), true);
     createFile(tmpdir, "b.xml", "b.xml".getBytes(StandardCharsets.UTF_8), true);
@@ -168,7 +169,7 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
 
   @Test
   public void testRECURSION() throws IOException {
-    File tmpdir = createTempDir();
+    File tmpdir = createTempDir().toFile();
     File childdir = new File(tmpdir + "/child" );
     childdir.mkdir();
     createFile(childdir, "a.xml", "a.xml".getBytes(StandardCharsets.UTF_8), true);

@@ -18,17 +18,18 @@
  -->
 
 <project name="lucene-solr" default="-projecthelp" basedir=".">
-  <!-- Look for property definition in various *build.properties files -->
+  <!-- Give user a chance to override without editing this file
+      (and without typing -D each time it compiles it -->
   <property file="${user.home}/lucene.build.properties"/>
   <property file="${user.home}/build.properties"/>
-  <property file="${basedir}/build.properties"/>
-  <property file="lucene/build.properties"/><!-- hack for Lucene users, clones Lucene's common-build.xml -->
+  <property file="lucene/build.properties"/><!-- ${common.dir} -->
 
   <!-- include version number from property file (includes "version.*" properties) -->
   <loadproperties srcFile="lucene/version.properties"/>
 
   <!-- define here, as common-build is not included! TODO: maybe include into a property file like the version? -->
   <property name="python32.exe" value="python3.2" />
+  <property name="args" value=""/>
 
   <!-- other settings: -->
   <property name="tests.heap-dump-dir" location="heapdumps"/>
@@ -96,10 +97,10 @@
       <fileset dir="${validate.currDir}">
         <include name="**/*.java"/>
         <include name="**/*.py"/>
-        <exclude name="**/backwards/**"/>
         <or>
           <containsregexp expression="@author\b" casesensitive="yes"/>
           <containsregexp expression="\bno(n|)commit\b" casesensitive="no"/>
+          <containsregexp expression="\bTOOD:" casesensitive="yes"/>
           <containsregexp expression="\t" casesensitive="no"/>
           <containsregexp expression="\$(?:LastChanged)?Date\b" casesensitive="yes"/>
           <containsregexp expression="\$(?:(?:LastChanged)?Revision|Rev)\b" casesensitive="yes"/>
@@ -112,7 +113,7 @@
       </fileset>
       <map from="${validate.currDir}${file.separator}" to="* "/>
     </pathconvert>
-    <fail if="validate.patternsFound">The following files contain @author tags, tabs, svn keywords or nocommits:${line.separator}${validate.patternsFound}</fail>
+    <fail if="validate.patternsFound">The following files contain @author tags, tabs, TOODs, svn keywords or nocommits:${line.separator}${validate.patternsFound}</fail>
   </target>
 	
   <target name="rat-sources" description="Runs rat across all sources and tests">
@@ -217,7 +218,7 @@
   <target name="netbeans" depends="resolve" description="Setup Netbeans configuration">
     <pathconvert property="netbeans.fileset.sourcefolders" pathsep="|" dirsep="/">
       <dirset dir="${basedir}/lucene" includes="**/src/java, **/src/examples, **/src/test, **/src/resources" 
-              excludes="tools/**, build/**, backwards/**" />
+              excludes="tools/**, build/**" />
       <dirset dir="${basedir}/solr" includes="**/src/java, **/src/examples, **/src/test, **/src/resources" 
               excludes="build/**" />
       <map from="${basedir}/" to=""/>
@@ -260,7 +261,7 @@
     </copy>
     
     <pathconvert property="eclipse.fileset.sourcefolders" pathsep="|" dirsep="/">
-      <dirset dir="${basedir}/lucene" includes="**/src/java, **/src/resources, **/src/test, **/src/test-files, **/src/examples" excludes="tools/**, build/**, backwards/**" />
+      <dirset dir="${basedir}/lucene" includes="**/src/java, **/src/resources, **/src/test, **/src/test-files, **/src/examples" excludes="tools/**, build/**" />
       <dirset dir="${basedir}/solr" includes="**/src/java, **/src/resources, **/src/test, **/src/test-files, **/src/examples" excludes="build/**" />
       <map from="${basedir}/" to=""/>
     </pathconvert>
@@ -432,7 +433,7 @@ File | Project Structure | Platform Settings | SDKs):
   </target>
 
   <target name="run-clover" description="Runs all tests to measure coverage and generates report (pass &quot;ANT_OPTS=-Xmx1536M&quot; as environment)" depends="clean">
-    <antcall>
+    <antcall inheritAll="false">
       <param name="run.clover" value="true"/>
       <!-- must be 1, as clover does not like parallel test runs: -->
       <param name="tests.jvms.override" value="1"/>
@@ -485,47 +486,6 @@ File | Project Structure | Platform Settings | SDKs):
     <antcall target="test"/>
   </target>
 
-  <!-- Jenkins tasks -->
-  <target name="-jenkins-base" depends="clean,test-with-heapdumps,validate,documentation-lint,jar-checksums,check-svn-working-copy"/>
-  
-  <target name="jenkins-hourly">
-    <antcall>
-      <param name="is.jenkins.build" value="true"/>
-      <target name="-jenkins-base"/>
-    </antcall>
-  </target>
-  
-  <target name="jenkins-nightly">
-    <antcall>
-      <param name="is.jenkins.build" value="true"/>
-      <param name="tests.nightly" value="true"/>
-      <target name="-jenkins-base"/>
-    </antcall>
-  </target>
-  
-  <target name="jenkins-maven-nightly" depends="clean,clean-maven-build">
-    <!-- step 1: build, install, deploy, and validate ANT-generated maven artifacts: -->
-    <antcall>
-      <param name="is.jenkins.build" value="true"/>
-      <target name="remove-maven-artifacts"/>
-      <!-- this implicitely publishes the maven artifacts: -->
-      <target name="validate-maven-dependencies"/>
-    </antcall>
-    <!-- step 2: run the maven build to check that the pom templates also work to drive "mvn": -->
-    <antcall>
-      <param name="is.jenkins.build" value="true"/>
-      <target name="remove-maven-artifacts"/>
-      <target name="run-maven-build"/>
-    </antcall>
-  </target>
-  
-  <target name="jenkins-clover">
-    <antcall>
-      <param name="is.jenkins.build" value="true"/>
-      <target name="run-clover"/>
-    </antcall>
-  </target>
-
   <target name="regenerate" description="Runs all code regenerators">
     <subant target="regenerate" inheritall="false" failonerror="false">
       <fileset dir="lucene" includes="build.xml" />
@@ -550,4 +510,53 @@ File | Project Structure | Platform Settings | SDKs):
       </subant>
     </sequential>
   </target>
+  
+  <!-- Jenkins tasks -->
+  <target name="-jenkins-base" depends="-print-java-info,clean,test-with-heapdumps,validate,documentation-lint,jar-checksums,check-svn-working-copy"/>
+  
+  <target name="-print-java-info">
+    <echo level="info" taskname="java-info">java version &quot;${java.version}&quot;
+${java.runtime.name} (${java.runtime.version}, ${java.vendor})
+${java.vm.name} (${java.vm.version}, ${java.vm.vendor})
+Test args: [${args}]</echo>
+  </target>
+  
+  <target name="jenkins-hourly">
+    <antcall>
+      <param name="is.jenkins.build" value="true"/>
+      <target name="-jenkins-base"/>
+    </antcall>
+  </target>
+  
+  <target name="jenkins-nightly">
+    <antcall>
+      <param name="is.jenkins.build" value="true"/>
+      <param name="tests.nightly" value="true"/>
+      <target name="-jenkins-base"/>
+    </antcall>
+  </target>
+  
+  <target name="jenkins-maven-nightly" depends="-print-java-info,clean,clean-maven-build">
+    <!-- step 1: build, install, deploy, and validate ANT-generated maven artifacts: -->
+    <antcall>
+      <param name="is.jenkins.build" value="true"/>
+      <target name="remove-maven-artifacts"/>
+      <!-- this implicitely publishes the maven artifacts: -->
+      <target name="validate-maven-dependencies"/>
+    </antcall>
+    <!-- step 2: run the maven build to check that the pom templates also work to drive "mvn": -->
+    <antcall>
+      <param name="is.jenkins.build" value="true"/>
+      <target name="remove-maven-artifacts"/>
+      <target name="run-maven-build"/>
+    </antcall>
+  </target>
+  
+  <target name="jenkins-clover" depends="-print-java-info">
+    <antcall>
+      <param name="is.jenkins.build" value="true"/>
+      <target name="run-clover"/>
+    </antcall>
+  </target>
+
 </project>

@@ -17,16 +17,6 @@ package org.apache.lucene.codecs.simpletext;
  * limitations under the License.
  */
 
-import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.DOC;
-import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.END;
-import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.END_OFFSET;
-import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.FIELD;
-import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.FREQ;
-import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.PAYLOAD;
-import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.POS;
-import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.START_OFFSET;
-import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.TERM;
-
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
@@ -39,8 +29,8 @@ import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.FieldInfo;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.FieldInfos;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
@@ -48,6 +38,7 @@ import org.apache.lucene.store.BufferedChecksumIndexInput;
 import org.apache.lucene.store.ChecksumIndexInput;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
@@ -56,17 +47,25 @@ import org.apache.lucene.util.CharsRef;
 import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util.IntsRef;
 import org.apache.lucene.util.IntsRefBuilder;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.StringHelper;
-import org.apache.lucene.util.UnicodeUtil;
 import org.apache.lucene.util.fst.Builder;
 import org.apache.lucene.util.fst.BytesRefFSTEnum;
 import org.apache.lucene.util.fst.FST;
 import org.apache.lucene.util.fst.PairOutputs;
 import org.apache.lucene.util.fst.PositiveIntOutputs;
 import org.apache.lucene.util.fst.Util;
+
+import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.DOC;
+import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.END;
+import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.END_OFFSET;
+import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.FIELD;
+import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.FREQ;
+import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.PAYLOAD;
+import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.POS;
+import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.START_OFFSET;
+import static org.apache.lucene.codecs.simpletext.SimpleTextFieldsWriter.TERM;
 
 class SimpleTextFieldsReader extends FieldsProducer {
 
@@ -204,7 +203,7 @@ class SimpleTextFieldsReader extends FieldsProducer {
 
     @Override
     public long totalTermFreq() {
-      return indexOptions == IndexOptions.DOCS_ONLY ? -1 : totalTermFreq;
+      return indexOptions == IndexOptions.DOCS ? -1 : totalTermFreq;
     }
  
     @Override
@@ -215,7 +214,7 @@ class SimpleTextFieldsReader extends FieldsProducer {
       } else {
         docsEnum = new SimpleTextDocsEnum();
       }
-      return docsEnum.reset(docsStart, liveDocs, indexOptions == IndexOptions.DOCS_ONLY, docFreq);
+      return docsEnum.reset(docsStart, liveDocs, indexOptions == IndexOptions.DOCS, docFreq);
     }
 
     @Override
@@ -596,6 +595,20 @@ class SimpleTextFieldsReader extends FieldsProducer {
     }
 
     @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      if (fst == null) {
+        return Collections.emptyList();
+      } else {
+        return Collections.singletonList(Accountables.namedAccountable("term cache", fst));
+      }
+    }
+
+    @Override
+    public String toString() {
+      return getClass().getSimpleName() + "(terms=" + termCount + ",postings=" + sumDocFreq + ",positions=" + sumTotalTermFreq + ",docs=" + docCount + ")";
+    }
+
+    @Override
     public TermsEnum iterator(TermsEnum reuse) throws IOException {
       if (fst != null) {
         return new SimpleTextTermsEnum(fst, fieldInfo.getIndexOptions());
@@ -611,7 +624,7 @@ class SimpleTextFieldsReader extends FieldsProducer {
 
     @Override
     public long getSumTotalTermFreq() {
-      return fieldInfo.getIndexOptions() == IndexOptions.DOCS_ONLY ? -1 : sumTotalTermFreq;
+      return fieldInfo.getIndexOptions() == IndexOptions.DOCS ? -1 : sumTotalTermFreq;
     }
 
     @Override
@@ -684,6 +697,16 @@ class SimpleTextFieldsReader extends FieldsProducer {
       sizeInBytes += (simpleTextTerms!=null) ? simpleTextTerms.ramBytesUsed() : 0;
     }
     return sizeInBytes;
+  }
+
+  @Override
+  public synchronized Iterable<? extends Accountable> getChildResources() {
+    return Accountables.namedAccountables("field", termsCache);
+  }
+
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(fields=" + fields.size() + ")";
   }
 
   @Override

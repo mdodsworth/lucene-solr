@@ -18,8 +18,10 @@ package org.apache.lucene.codecs.blocktreeords;
  */
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.TreeMap;
 
 import org.apache.lucene.codecs.CodecUtil;
@@ -27,15 +29,14 @@ import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.PostingsReaderBase;
 import org.apache.lucene.codecs.blocktreeords.FSTOrdsOutputs.Output;
 import org.apache.lucene.index.CorruptIndexException;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.FieldInfo;
-import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.IndexFileNames;
-import org.apache.lucene.index.SegmentInfo;
+import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.Terms;
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
 
@@ -58,51 +59,42 @@ public final class OrdsBlockTreeTermsReader extends FieldsProducer {
 
   private final TreeMap<String,OrdsFieldReader> fields = new TreeMap<>();
 
-  /** File offset where the directory starts in the terms file. */
-  private long dirOffset;
-
-  /** File offset where the directory starts in the index file. */
-  private long indexDirOffset;
-
-  final String segment;
-  
-  private final int version;
-
   /** Sole constructor. */
-  public OrdsBlockTreeTermsReader(Directory dir, FieldInfos fieldInfos, SegmentInfo info,
-                                  PostingsReaderBase postingsReader, IOContext ioContext,
-                                  String segmentSuffix)
-    throws IOException {
+  public OrdsBlockTreeTermsReader(PostingsReaderBase postingsReader, SegmentReadState state) throws IOException {
     
     this.postingsReader = postingsReader;
 
-    this.segment = info.name;
-    in = dir.openInput(IndexFileNames.segmentFileName(segment, segmentSuffix, OrdsBlockTreeTermsWriter.TERMS_EXTENSION),
-                       ioContext);
+    String termsFile = IndexFileNames.segmentFileName(state.segmentInfo.name, 
+                                                      state.segmentSuffix, 
+                                                      OrdsBlockTreeTermsWriter.TERMS_EXTENSION);
+    in = state.directory.openInput(termsFile, state.context);
 
     boolean success = false;
     IndexInput indexIn = null;
 
     try {
-      version = CodecUtil.checkHeader(in,
-                                      OrdsBlockTreeTermsWriter.TERMS_CODEC_NAME,
-                                      OrdsBlockTreeTermsWriter.VERSION_START,
-                                      OrdsBlockTreeTermsWriter.VERSION_CURRENT);
-      indexIn = dir.openInput(IndexFileNames.segmentFileName(segment, segmentSuffix, OrdsBlockTreeTermsWriter.TERMS_INDEX_EXTENSION),
-                              ioContext);
-      int indexVersion = CodecUtil.checkHeader(indexIn,
-                                               OrdsBlockTreeTermsWriter.TERMS_INDEX_CODEC_NAME,
-                                               OrdsBlockTreeTermsWriter.VERSION_START,
-                                               OrdsBlockTreeTermsWriter.VERSION_CURRENT);
+      int version = CodecUtil.checkIndexHeader(in, OrdsBlockTreeTermsWriter.TERMS_CODEC_NAME,
+                                                     OrdsBlockTreeTermsWriter.VERSION_START,
+                                                     OrdsBlockTreeTermsWriter.VERSION_CURRENT,
+                                                     state.segmentInfo.getId(), state.segmentSuffix);
+      
+      String indexFile = IndexFileNames.segmentFileName(state.segmentInfo.name, 
+                                                        state.segmentSuffix, 
+                                                        OrdsBlockTreeTermsWriter.TERMS_INDEX_EXTENSION);
+      indexIn = state.directory.openInput(indexFile, state.context);
+      int indexVersion = CodecUtil.checkIndexHeader(indexIn, OrdsBlockTreeTermsWriter.TERMS_INDEX_CODEC_NAME,
+                                                               OrdsBlockTreeTermsWriter.VERSION_START,
+                                                               OrdsBlockTreeTermsWriter.VERSION_CURRENT,
+                                                               state.segmentInfo.getId(), state.segmentSuffix);
       if (indexVersion != version) {
-        throw new CorruptIndexException("mixmatched version files: " + in + "=" + version + "," + indexIn + "=" + indexVersion);
+        throw new CorruptIndexException("mixmatched version files: " + in + "=" + version + "," + indexIn + "=" + indexVersion, indexIn);
       }
       
       // verify
       CodecUtil.checksumEntireFile(indexIn);
 
       // Have PostingsReader init itself
-      postingsReader.init(in);
+      postingsReader.init(in, state);
       
       
       // NOTE: data file is too costly to verify checksum against all the bytes on open,
@@ -112,12 +104,12 @@ public final class OrdsBlockTreeTermsReader extends FieldsProducer {
       CodecUtil.retrieveChecksum(in);
 
       // Read per-field details
-      seekDir(in, dirOffset);
-      seekDir(indexIn, indexDirOffset);
+      seekDir(in);
+      seekDir(indexIn);
 
       final int numFields = in.readVInt();
       if (numFields < 0) {
-        throw new CorruptIndexException("invalid numFields: " + numFields + " (resource=" + in + ")");
+        throw new CorruptIndexException("invalid numFields: " + numFields, in);
       }
 
       for(int i=0;i<numFields;i++) {
@@ -130,10 +122,10 @@ public final class OrdsBlockTreeTermsReader extends FieldsProducer {
         in.readBytes(code.bytes, 0, numBytes);
         code.length = numBytes;
         final Output rootCode = OrdsBlockTreeTermsWriter.FST_OUTPUTS.newOutput(code, 0, numTerms);
-        final FieldInfo fieldInfo = fieldInfos.fieldInfo(field);
+        final FieldInfo fieldInfo = state.fieldInfos.fieldInfo(field);
         assert fieldInfo != null: "field=" + field;
         assert numTerms <= Integer.MAX_VALUE;
-        final long sumTotalTermFreq = fieldInfo.getIndexOptions() == IndexOptions.DOCS_ONLY ? -1 : in.readVLong();
+        final long sumTotalTermFreq = fieldInfo.getIndexOptions() == IndexOptions.DOCS ? -1 : in.readVLong();
         final long sumDocFreq = in.readVLong();
         final int docCount = in.readVInt();
         final int longsSize = in.readVInt();
@@ -141,21 +133,21 @@ public final class OrdsBlockTreeTermsReader extends FieldsProducer {
 
         BytesRef minTerm = readBytesRef(in);
         BytesRef maxTerm = readBytesRef(in);
-        if (docCount < 0 || docCount > info.getDocCount()) { // #docs with field must be <= #docs
-          throw new CorruptIndexException("invalid docCount: " + docCount + " maxDoc: " + info.getDocCount() + " (resource=" + in + ")");
+        if (docCount < 0 || docCount > state.segmentInfo.getDocCount()) { // #docs with field must be <= #docs
+          throw new CorruptIndexException("invalid docCount: " + docCount + " maxDoc: " + state.segmentInfo.getDocCount(), in);
         }
         if (sumDocFreq < docCount) {  // #postings must be >= #docs with field
-          throw new CorruptIndexException("invalid sumDocFreq: " + sumDocFreq + " docCount: " + docCount + " (resource=" + in + ")");
+          throw new CorruptIndexException("invalid sumDocFreq: " + sumDocFreq + " docCount: " + docCount, in);
         }
         if (sumTotalTermFreq != -1 && sumTotalTermFreq < sumDocFreq) { // #positions must be >= #postings
-          throw new CorruptIndexException("invalid sumTotalTermFreq: " + sumTotalTermFreq + " sumDocFreq: " + sumDocFreq + " (resource=" + in + ")");
+          throw new CorruptIndexException("invalid sumTotalTermFreq: " + sumTotalTermFreq + " sumDocFreq: " + sumDocFreq, in);
         }
         final long indexStartFP = indexIn.readVLong();
         OrdsFieldReader previous = fields.put(fieldInfo.name,       
                                               new OrdsFieldReader(this, fieldInfo, numTerms, rootCode, sumTotalTermFreq, sumDocFreq, docCount,
                                                                   indexStartFP, longsSize, indexIn, minTerm, maxTerm));
         if (previous != null) {
-          throw new CorruptIndexException("duplicate field: " + fieldInfo.name + " (resource=" + in + ")");
+          throw new CorruptIndexException("duplicate field: " + fieldInfo.name, in);
         }
       }
       indexIn.close();
@@ -178,10 +170,9 @@ public final class OrdsBlockTreeTermsReader extends FieldsProducer {
   }
 
   /** Seek {@code input} to the directory offset. */
-  private void seekDir(IndexInput input, long dirOffset)
-      throws IOException {
+  private void seekDir(IndexInput input) throws IOException {
     input.seek(input.length() - CodecUtil.footerLength() - 8);
-    dirOffset = input.readLong();
+    long dirOffset = input.readLong();
     input.seek(dirOffset);
   }
 
@@ -235,11 +226,19 @@ public final class OrdsBlockTreeTermsReader extends FieldsProducer {
 
   @Override
   public long ramBytesUsed() {
-    long sizeInByes = ((postingsReader!=null) ? postingsReader.ramBytesUsed() : 0);
+    long sizeInBytes = postingsReader.ramBytesUsed();
     for (OrdsFieldReader reader : fields.values()) {
-      sizeInByes += reader.ramBytesUsed();
+      sizeInBytes += reader.ramBytesUsed();
     }
-    return sizeInByes;
+    return sizeInBytes;
+  }
+  
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    List<Accountable> resources = new ArrayList<>();
+    resources.addAll(Accountables.namedAccountables("field", fields));
+    resources.add(Accountables.namedAccountable("delegate", postingsReader));
+    return Collections.unmodifiableList(resources);
   }
 
   @Override
@@ -249,5 +248,10 @@ public final class OrdsBlockTreeTermsReader extends FieldsProducer {
       
     // postings
     postingsReader.checkIntegrity();
+  }
+  
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(fields=" + fields.size() + ",delegate=" + postingsReader.toString() + ")";
   }
 }

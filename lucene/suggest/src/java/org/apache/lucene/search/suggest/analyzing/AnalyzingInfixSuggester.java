@@ -18,12 +18,14 @@ package org.apache.lucene.search.suggest.analyzing;
  */
 
 import java.io.Closeable;
-import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.apache.lucene.analysis.Analyzer;
@@ -31,10 +33,8 @@ import org.apache.lucene.analysis.AnalyzerWrapper;
 import org.apache.lucene.analysis.TokenFilter;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.ngram.EdgeNGramTokenFilter;
-import org.apache.lucene.analysis.ngram.Lucene43EdgeNGramTokenFilter;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
-import org.apache.lucene.codecs.lucene410.Lucene410Codec;
 import org.apache.lucene.document.BinaryDocValuesField;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
@@ -43,14 +43,14 @@ import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
-import org.apache.lucene.index.FilterAtomicReader;
+import org.apache.lucene.index.FilterLeafReader;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.MultiDocValues;
 import org.apache.lucene.index.ReaderUtil;
 import org.apache.lucene.index.SegmentReader;
@@ -72,12 +72,14 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopFieldCollector;
 import org.apache.lucene.search.TopFieldDocs;
 import org.apache.lucene.search.suggest.InputIterator;
-import org.apache.lucene.search.suggest.Lookup.LookupResult; // javadocs
 import org.apache.lucene.search.suggest.Lookup;
+import org.apache.lucene.search.suggest.Lookup.LookupResult; // javadocs
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.Version;
@@ -209,7 +211,6 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
    *  codec to use. */
   protected IndexWriterConfig getIndexWriterConfig(Analyzer indexAnalyzer, IndexWriterConfig.OpenMode openMode) {
     IndexWriterConfig iwc = new IndexWriterConfig(indexAnalyzer);
-    iwc.setCodec(new Lucene410Codec());
     iwc.setOpenMode(openMode);
 
     // This way all merged segments will be sorted at
@@ -222,7 +223,7 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
 
   /** Subclass can override to choose a specific {@link
    *  Directory} implementation. */
-  protected Directory getDirectory(File path) throws IOException {
+  protected Directory getDirectory(Path path) throws IOException {
     return FSDirectory.open(path);
   }
 
@@ -295,12 +296,7 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
       protected TokenStreamComponents wrapComponents(String fieldName, TokenStreamComponents components) {
         if (fieldName.equals("textgrams") && minPrefixChars > 0) {
           // TODO: should use an EdgeNGramTokenFilterFactory here
-          TokenFilter filter;
-          if (matchVersion.onOrAfter(Version.LUCENE_4_4_0)) {
-            filter = new EdgeNGramTokenFilter(components.getTokenStream(), 1, minPrefixChars);
-          } else {
-            filter = new Lucene43EdgeNGramTokenFilter(components.getTokenStream(), 1, minPrefixChars);
-          }
+          TokenFilter filter = new EdgeNGramTokenFilter(components.getTokenStream(), 1, minPrefixChars);
           return new TokenStreamComponents(components.getTokenizer(), filter);
         } else {
           return components;
@@ -383,7 +379,7 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
    */
   protected FieldType getTextFieldType(){
     FieldType ft = new FieldType(TextField.TYPE_NOT_STORED);
-    ft.setIndexOptions(IndexOptions.DOCS_ONLY);
+    ft.setIndexOptions(IndexOptions.DOCS);
     ft.setOmitNorms(true);
 
     return ft;
@@ -396,7 +392,22 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
 
   /** Lookup, without any context. */
   public List<LookupResult> lookup(CharSequence key, int num, boolean allTermsRequired, boolean doHighlight) throws IOException {
-    return lookup(key, null, num, allTermsRequired, doHighlight);
+    return lookup(key, (Map<BytesRef, BooleanClause.Occur>)null, num, allTermsRequired, doHighlight);
+  }
+
+  /** Lookup, with context but without booleans. Context booleans default to SHOULD,
+   *  so each suggestion must have at least one of the contexts. */
+  public List<LookupResult> lookup(CharSequence key, Set<BytesRef> contexts, int num, boolean allTermsRequired, boolean doHighlight) throws IOException {
+
+    if (contexts == null) {
+      return lookup(key, num, allTermsRequired, doHighlight);
+    }
+
+    Map<BytesRef, BooleanClause.Occur> contextInfo = new HashMap<>();
+    for (BytesRef context : contexts) {
+      contextInfo.put(context, BooleanClause.Occur.SHOULD);
+    }
+    return lookup(key, contextInfo, num, allTermsRequired, doHighlight);
   }
 
   /** This is called if the last token isn't ended
@@ -414,7 +425,7 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
   /** Retrieve suggestions, specifying whether all terms
    *  must match ({@code allTermsRequired}) and whether the hits
    *  should be highlighted ({@code doHighlight}). */
-  public List<LookupResult> lookup(CharSequence key, Set<BytesRef> contexts, int num, boolean allTermsRequired, boolean doHighlight) throws IOException {
+  public List<LookupResult> lookup(CharSequence key, Map<BytesRef, BooleanClause.Occur> contextInfo, int num, boolean allTermsRequired, boolean doHighlight) throws IOException {
 
     if (searcherMgr == null) {
       throw new IllegalStateException("suggester was not built");
@@ -475,21 +486,35 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
         }
       }
 
-      if (contexts != null) {
-        BooleanQuery sub = new BooleanQuery();
-        query.add(sub, BooleanClause.Occur.MUST);
-        for(BytesRef context : contexts) {
-          // NOTE: we "should" wrap this in
-          // ConstantScoreQuery, or maybe send this as a
-          // Filter instead to search, but since all of
-          // these are MUST'd, the change to the score won't
-          // affect the overall ranking.  Since we indexed
-          // as DOCS_ONLY, the perf should be the same
-          // either way (no freq int[] blocks to decode):
+      if (contextInfo != null) {
+        
+        boolean allMustNot = true;
+        for (Map.Entry<BytesRef, BooleanClause.Occur> entry : contextInfo.entrySet()) {
+          if (entry.getValue() != BooleanClause.Occur.MUST_NOT) {
+            allMustNot = false;
+            break;
+          }
+        }
 
-          // TODO: if we had a BinaryTermField we could fix
-          // this "must be valid ut8f" limitation:
-          sub.add(new TermQuery(new Term(CONTEXTS_FIELD_NAME, context.utf8ToString())), BooleanClause.Occur.SHOULD);
+        // do not make a subquery if all context booleans are must not
+        if (allMustNot == true) {
+          for (Map.Entry<BytesRef, BooleanClause.Occur> entry : contextInfo.entrySet()) {
+            query.add(new TermQuery(new Term(CONTEXTS_FIELD_NAME, entry.getKey().utf8ToString())), BooleanClause.Occur.MUST_NOT);
+          }
+
+        } else {
+          BooleanQuery sub = new BooleanQuery();
+          query.add(sub, BooleanClause.Occur.MUST);
+
+          for (Map.Entry<BytesRef, BooleanClause.Occur> entry : contextInfo.entrySet()) {
+            // NOTE: we "should" wrap this in
+            // ConstantScoreQuery, or maybe send this as a
+            // Filter instead to search.
+
+            // TODO: if we had a BinaryTermField we could fix
+            // this "must be valid ut8f" limitation:
+            sub.add(new TermQuery(new Term(CONTEXTS_FIELD_NAME, entry.getKey().utf8ToString())), entry.getValue());
+          }
         }
       }
     }
@@ -544,7 +569,7 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
     // This will just be null if app didn't pass payloads to build():
     // TODO: maybe just stored fields?  they compress...
     BinaryDocValues payloadsDV = MultiDocValues.getBinaryValues(searcher.getIndexReader(), "payloads");
-    List<AtomicReaderContext> leaves = searcher.getIndexReader().leaves();
+    List<LeafReaderContext> leaves = searcher.getIndexReader().leaves();
     List<LookupResult> results = new ArrayList<>();
     for (int i=0;i<hits.scoreDocs.length;i++) {
       FieldDoc fd = (FieldDoc) hits.scoreDocs[i];
@@ -578,8 +603,7 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
       LookupResult result;
 
       if (doHighlight) {
-        Object highlightKey = highlight(text, matchedTokens, prefixToken);
-        result = new LookupResult(highlightKey.toString(), highlightKey, score, payload, contexts);
+        result = new LookupResult(text, highlight(text, matchedTokens, prefixToken), score, payload, contexts);
       } else {
         result = new LookupResult(text, score, payload, contexts);
       }
@@ -670,12 +694,14 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
   protected void addPrefixMatch(StringBuilder sb, String surface, String analyzed, String prefixToken) {
     // TODO: apps can try to invert their analysis logic
     // here, e.g. downcase the two before checking prefix:
+    if (prefixToken.length() >= surface.length()) {
+      addWholeMatch(sb, surface, analyzed);
+      return;
+    }
     sb.append("<b>");
     sb.append(surface.substring(0, prefixToken.length()));
     sb.append("</b>");
-    if (prefixToken.length() < surface.length()) {
-      sb.append(surface.substring(prefixToken.length()));
-    }
+    sb.append(surface.substring(prefixToken.length()));
   }
 
   @Override
@@ -708,8 +734,8 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
       if (searcherMgr != null) {
         IndexSearcher searcher = searcherMgr.acquire();
         try {
-          for (AtomicReaderContext context : searcher.getIndexReader().leaves()) {
-            AtomicReader reader = FilterAtomicReader.unwrap(context.reader());
+          for (LeafReaderContext context : searcher.getIndexReader().leaves()) {
+            LeafReader reader = FilterLeafReader.unwrap(context.reader());
             if (reader instanceof SegmentReader) {
               mem += ((SegmentReader) context.reader()).ramBytesUsed();
             }
@@ -719,6 +745,29 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
         }
       }
       return mem;
+    } catch (IOException ioe) {
+      throw new RuntimeException(ioe);
+    }
+  }
+
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    List<Accountable> resources = new ArrayList<>();
+    try {
+      if (searcherMgr != null) {
+        IndexSearcher searcher = searcherMgr.acquire();
+        try {
+          for (LeafReaderContext context : searcher.getIndexReader().leaves()) {
+            LeafReader reader = FilterLeafReader.unwrap(context.reader());
+            if (reader instanceof SegmentReader) {
+              resources.add(Accountables.namedAccountable("segment", (SegmentReader)reader));
+            }
+          }
+        } finally {
+          searcherMgr.release(searcher);
+        }
+      }
+      return resources;
     } catch (IOException ioe) {
       throw new RuntimeException(ioe);
     }

@@ -19,13 +19,14 @@ package org.apache.lucene.util.fst;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.lucene.codecs.CodecUtil;
@@ -36,6 +37,7 @@ import org.apache.lucene.store.InputStreamDataInput;
 import org.apache.lucene.store.OutputStreamDataOutput;
 import org.apache.lucene.store.RAMOutputStream;
 import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.Constants;
 import org.apache.lucene.util.IOUtils;
@@ -445,6 +447,23 @@ public final class FST<T> implements Accountable {
     return size;
   }
 
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    List<Accountable> resources = new ArrayList<>();
+    if (packed) {
+      resources.add(Accountables.namedAccountable("node ref to address", nodeRefToAddress));
+    } else if (nodeAddress != null) {
+      resources.add(Accountables.namedAccountable("node addresses", nodeAddress));
+      resources.add(Accountables.namedAccountable("in counts", inCounts));
+    }
+    return resources;
+  }
+
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(input=" + inputType + ",output=" + outputs + ",packed=" + packed + ",nodes=" + nodeCount + ",arcs=" + arcCount + ")";
+  }
+
   void finish(long newStartNode) throws IOException {
     if (startNode != -1) {
       throw new IllegalStateException("already finished");
@@ -614,37 +633,18 @@ public final class FST<T> implements Accountable {
   /**
    * Writes an automaton to a file. 
    */
-  public void save(final File file) throws IOException {
-    boolean success = false;
-    OutputStream os = new BufferedOutputStream(new FileOutputStream(file));
-    try {
-      save(new OutputStreamDataOutput(os));
-      success = true;
-    } finally { 
-      if (success) { 
-        IOUtils.close(os);
-      } else {
-        IOUtils.closeWhileHandlingException(os); 
-      }
+  public void save(final Path path) throws IOException {
+    try (OutputStream os = Files.newOutputStream(path)) {
+      save(new OutputStreamDataOutput(new BufferedOutputStream(os)));
     }
   }
 
   /**
    * Reads an automaton from a file. 
    */
-  public static <T> FST<T> read(File file, Outputs<T> outputs) throws IOException {
-    InputStream is = new BufferedInputStream(new FileInputStream(file));
-    boolean success = false;
-    try {
-      FST<T> fst = new FST<>(new InputStreamDataInput(is), outputs);
-      success = true;
-      return fst;
-    } finally {
-      if (success) { 
-        IOUtils.close(is);
-      } else {
-        IOUtils.closeWhileHandlingException(is); 
-      }
+  public static <T> FST<T> read(Path path, Outputs<T> outputs) throws IOException {
+    try (InputStream is = Files.newInputStream(path)) {
+      return new FST<>(new InputStreamDataInput(new BufferedInputStream(is)), outputs);
     }
   }
 
@@ -1374,16 +1374,6 @@ public final class FST<T> implements Accountable {
     /** Returns true if this reader uses reversed bytes
      *  under-the-hood. */
     public abstract boolean reversed();
-  }
-
-  private static class ArcAndState<T> {
-    final Arc<T> arc;
-    final IntsRef chain;
-
-    public ArcAndState(Arc<T> arc, IntsRef chain) {
-      this.arc = arc;
-      this.chain = chain;
-    }
   }
 
   /*

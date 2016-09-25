@@ -66,11 +66,11 @@ import org.apache.solr.request.SolrRequestHandler;
 import org.apache.solr.request.SolrRequestInfo;
 import org.apache.solr.response.BinaryQueryResponseWriter;
 import org.apache.solr.response.QueryResponseWriter;
+import org.apache.solr.response.QueryResponseWriterUtil;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.servlet.cache.HttpCacheHeaderUtil;
 import org.apache.solr.servlet.cache.Method;
 import org.apache.solr.update.processor.DistributingUpdateProcessorFactory;
-import org.apache.solr.util.FastWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -86,11 +86,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.io.Writer;
 import java.net.URL;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -120,8 +116,6 @@ public class SolrDispatchFilter extends BaseSolrFilter {
   protected String abortErrorMessage = null;
   protected final HttpClient httpClient = HttpClientUtil.createClient(new ModifiableSolrParams());
   
-  private static final Charset UTF8 = StandardCharsets.UTF_8;
-
   public SolrDispatchFilter() {
   }
   
@@ -262,20 +256,12 @@ public class SolrDispatchFilter extends BaseSolrFilter {
         boolean usingAliases = false;
         List<String> collectionsList = null;
         // Check for the core admin collections url
-        if( path.equals( "/admin/collections" ) ) {
-          handler = cores.getCollectionsHandler();
+        handler = cores.getRequestHandler(path);
+        if( handler!= null ) {
           solrReq =  SolrRequestParsers.DEFAULT.parse(null,path, req);
           handleAdminRequest(req, response, handler, solrReq);
           return;
-        }
-        // Check for the core admin info url
-        if( path.startsWith( "/admin/info" ) ) {
-          handler = cores.getInfoHandler();
-          solrReq =  SolrRequestParsers.DEFAULT.parse(null,path, req);
-          handleAdminRequest(req, response, handler, solrReq);
-          return;
-        }
-        else {
+        } else {
           //otherwise, we should find a core from the path
           idx = path.indexOf( "/", 1 );
           if( idx > 1 ) {
@@ -324,6 +310,7 @@ public class SolrDispatchFilter extends BaseSolrFilter {
             String coreUrl = getRemotCoreUrl(cores, corename, origCorename);
             // don't proxy for internal update requests
             SolrParams queryParams = SolrRequestParsers.parseQueryString(req.getQueryString());
+            checkStateIsValid(cores, queryParams.get(CloudSolrServer.STATE_VERSION));
             if (coreUrl != null
                 && queryParams
                     .get(DistributingUpdateProcessorFactory.DISTRIB_UPDATE_PARAM) == null) {
@@ -357,7 +344,7 @@ public class SolrDispatchFilter extends BaseSolrFilter {
 
           // Handle /schema/* and /config/* paths via Restlet
           if( path.equals("/schema") || path.startsWith("/schema/")
-              || path.equals("/config") || path.startsWith("/config/")) {
+              /*|| path.equals("/config") || path.startsWith("/config/")*/) {
             solrReq = parser.parse(core, path, req);
             SolrRequestInfo.setRequestInfo(new SolrRequestInfo(solrReq, new SolrQueryResponse()));
             if( path.equals(req.getServletPath()) ) {
@@ -379,6 +366,7 @@ public class SolrDispatchFilter extends BaseSolrFilter {
               if( "/select".equals( path ) || "/select/".equals( path ) ) {
                 solrReq = parser.parse( core, path, req );
 
+                checkStateIsValid(cores,solrReq.getParams().get(CloudSolrServer.STATE_VERSION));
                 String qt = solrReq.getParams().get( CommonParams.QT );
                 handler = core.getRequestHandler( qt );
                 if( handler == null ) {
@@ -468,6 +456,22 @@ public class SolrDispatchFilter extends BaseSolrFilter {
     chain.doFilter(request, response);
   }
 
+  private void checkStateIsValid(CoreContainer cores, String stateVer) {
+    if (stateVer != null && !stateVer.isEmpty() && cores.isZooKeeperAware()) {
+      // many have multiple collections separated by |
+      String[] pairs = StringUtils.split(stateVer, '|');
+      for (String pair : pairs) {
+        String[] pcs = StringUtils.split(pair, ':');
+        if (pcs.length == 2 && !pcs[0].isEmpty() && !pcs[1].isEmpty()) {
+          Boolean status = cores.getZkController().getZkStateReader().checkValid(pcs[0], Integer.parseInt(pcs[1]));
+          
+          if (Boolean.TRUE != status) {
+            throw new SolrException(ErrorCode.INVALID_STATE, "STATE STALE: " + pair + "valid : " + status);
+          }
+        }
+      }
+    }
+  }
 
   private void processAliases(SolrQueryRequest solrReq, Aliases aliases,
       List<String> collectionsList) {
@@ -756,18 +760,7 @@ public class SolrDispatchFilter extends BaseSolrFilter {
     }
     
     if (Method.HEAD != reqMethod) {
-      if (responseWriter instanceof BinaryQueryResponseWriter) {
-        BinaryQueryResponseWriter binWriter = (BinaryQueryResponseWriter) responseWriter;
-        binWriter.write(response.getOutputStream(), solrReq, solrRsp);
-      } else {
-        String charset = ContentStreamBase.getCharsetFromContentType(ct);
-        Writer out = (charset == null)
-          ? new OutputStreamWriter(response.getOutputStream(), UTF8)
-          : new OutputStreamWriter(response.getOutputStream(), charset);
-        out = new FastWriter(out);
-        responseWriter.write(out, solrReq, solrRsp);
-        out.flush();
-      }
+      QueryResponseWriterUtil.writeQueryResponse(response.getOutputStream(), responseWriter, solrReq, solrRsp, ct);
     }
     //else http HEAD request, nothing to write out, waited this long just to get ContentType
   }

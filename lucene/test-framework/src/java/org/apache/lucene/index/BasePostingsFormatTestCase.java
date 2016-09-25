@@ -17,8 +17,8 @@ package org.apache.lucene.index;
  * limitations under the License.
  */
 
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -40,13 +40,11 @@ import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.PostingsFormat;
-import org.apache.lucene.codecs.lucene410.Lucene410Codec;
+import org.apache.lucene.codecs.asserting.AssertingCodec;
 import org.apache.lucene.codecs.perfield.PerFieldPostingsFormat;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
-import org.apache.lucene.index.FieldInfo.DocValuesType;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.TermsEnum.SeekStatus;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FlushInfo;
@@ -57,12 +55,13 @@ import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LineFileDocs;
 import org.apache.lucene.util.RamUsageTester;
+import org.apache.lucene.util.StringHelper;
 import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.UnicodeUtil;
 import org.apache.lucene.util.Version;
 import org.apache.lucene.util.automaton.Automaton;
-import org.apache.lucene.util.automaton.AutomatonTestUtil.RandomAcceptedStrings;
 import org.apache.lucene.util.automaton.AutomatonTestUtil;
+import org.apache.lucene.util.automaton.AutomatonTestUtil.RandomAcceptedStrings;
 import org.apache.lucene.util.automaton.CompiledAutomaton;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -370,9 +369,9 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
         continue;
       }
 
-      fieldInfoArray[fieldUpto] = new FieldInfo(field, true, fieldUpto, false, false, true,
+      fieldInfoArray[fieldUpto] = new FieldInfo(field, fieldUpto, false, false, true,
                                                 IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS,
-                                                null, DocValuesType.NUMERIC, -1, null);
+                                                DocValuesType.NONE, -1, null);
       fieldUpto++;
 
       SortedMap<BytesRef,SeedAndOrd> postings = new TreeMap<>();
@@ -414,7 +413,7 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
 
         // NOTE: sort of silly: we enum all the docs just to
         // get the maxDoc
-        DocsEnum docsEnum = getSeedPostings(term, termSeed, false, IndexOptions.DOCS_ONLY, true);
+        DocsEnum docsEnum = getSeedPostings(term, termSeed, false, IndexOptions.DOCS, true);
         int doc;
         int lastDoc = 0;
         while((doc = docsEnum.nextDoc()) != DocsEnum.NO_MORE_DOCS) {
@@ -675,7 +674,7 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
   // randomly index at lower IndexOption
   private FieldsProducer buildIndex(Directory dir, IndexOptions maxAllowed, boolean allowPayloads, boolean alwaysTestMax) throws IOException {
     Codec codec = getCodec();
-    SegmentInfo segmentInfo = new SegmentInfo(dir, Version.LATEST, "_0", maxDoc, false, codec, null);
+    SegmentInfo segmentInfo = new SegmentInfo(dir, Version.LATEST, "_0", maxDoc, false, codec, null, StringHelper.randomId());
 
     int maxIndexOption = Arrays.asList(IndexOptions.values()).indexOf(maxAllowed);
     if (VERBOSE) {
@@ -690,18 +689,16 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
     
       // Randomly picked the IndexOptions to index this
       // field with:
-      IndexOptions indexOptions = IndexOptions.values()[alwaysTestMax ? maxIndexOption : random().nextInt(1+maxIndexOption)];
+      IndexOptions indexOptions = IndexOptions.values()[alwaysTestMax ? maxIndexOption : TestUtil.nextInt(random(), 1, maxIndexOption)];
       boolean doPayloads = indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0 && allowPayloads;
 
       newFieldInfoArray[fieldUpto] = new FieldInfo(oldFieldInfo.name,
-                                                   true,
                                                    fieldUpto,
                                                    false,
                                                    false,
                                                    doPayloads,
                                                    indexOptions,
-                                                   null,
-                                                   DocValuesType.NUMERIC,
+                                                   DocValuesType.NONE,
                                                    -1,
                                                    null);
     }
@@ -1250,7 +1247,7 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
     for(String field : fields.keySet()) {
       while (true) {
         Automaton a = AutomatonTestUtil.randomAutomaton(random());
-        CompiledAutomaton ca = new CompiledAutomaton(a);
+        CompiledAutomaton ca = new CompiledAutomaton(a, null, true, Integer.MAX_VALUE);
         if (ca.type != CompiledAutomaton.AUTOMATON_TYPE.NORMAL) {
           // Keep retrying until we get an A that will really "use" the PF's intersect code:
           continue;
@@ -1335,7 +1332,7 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
   /** Indexes all fields/terms at the specified
    *  IndexOptions, and fully tests at that IndexOptions. */
   private void testFull(IndexOptions options, boolean withPayloads) throws Exception {
-    File path = createTempDir("testPostingsFormat.testExact");
+    Path path = createTempDir("testPostingsFormat.testExact");
     Directory dir = newFSDirectory(path);
 
     // TODO test thread safety of buildIndex too
@@ -1356,11 +1353,11 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
 
     fieldsProducer.close();
     dir.close();
-    TestUtil.rm(path);
+    IOUtils.rm(path);
   }
 
   public void testDocsOnly() throws Exception {
-    testFull(IndexOptions.DOCS_ONLY, false);
+    testFull(IndexOptions.DOCS, false);
   }
 
   public void testDocsAndFreqs() throws Exception {
@@ -1388,7 +1385,7 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
     int iters = 5;
 
     for(int iter=0;iter<iters;iter++) {
-      File path = createTempDir("testPostingsFormat");
+      Path path = createTempDir("testPostingsFormat");
       Directory dir = newFSDirectory(path);
 
       boolean indexPayloads = random().nextBoolean();
@@ -1405,7 +1402,7 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
       fieldsProducer = null;
 
       dir.close();
-      TestUtil.rm(path);
+      IOUtils.rm(path);
     }
   }
   
@@ -1418,7 +1415,7 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
     doc.add(newStringField("", "something", Field.Store.NO));
     iw.addDocument(doc);
     DirectoryReader ir = iw.getReader();
-    AtomicReader ar = getOnlySegmentReader(ir);
+    LeafReader ar = getOnlySegmentReader(ir);
     Fields fields = ar.fields();
     int fieldCount = fields.size();
     // -1 is allowed, if the codec doesn't implement fields.size():
@@ -1443,7 +1440,7 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
     doc.add(newStringField("", "", Field.Store.NO));
     iw.addDocument(doc);
     DirectoryReader ir = iw.getReader();
-    AtomicReader ar = getOnlySegmentReader(ir);
+    LeafReader ar = getOnlySegmentReader(ir);
     Fields fields = ar.fields();
     int fieldCount = fields.size();
     // -1 is allowed, if the codec doesn't implement fields.size():
@@ -1475,7 +1472,7 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
     iw.deleteDocuments(new Term("ghostField", "something")); // delete the only term for the field
     iw.forceMerge(1);
     DirectoryReader ir = iw.getReader();
-    AtomicReader ar = getOnlySegmentReader(ir);
+    LeafReader ar = getOnlySegmentReader(ir);
     Fields fields = ar.fields();
     // Ghost busting terms dict impls will have
     // fields.size() == 0; all others must be == 1:
@@ -1519,7 +1516,7 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
     // TODO: would be better to use / delegate to the current
     // Codec returned by getCodec()
 
-    iwc.setCodec(new Lucene410Codec() {
+    iwc.setCodec(new AssertingCodec() {
         @Override
         public PostingsFormat getPostingsFormatForField(String field) {
 
@@ -1738,9 +1735,11 @@ public abstract class BasePostingsFormatTestCase extends BaseIndexFileFormatTest
   @Override
   protected void addRandomFields(Document doc) {
     for (IndexOptions opts : IndexOptions.values()) {
+      if (opts == IndexOptions.NONE) {
+        continue;
+      }
       FieldType ft = new FieldType();
       ft.setIndexOptions(opts);
-      ft.setIndexed(true);
       ft.freeze();
       final int numFields = random().nextInt(5);
       for (int j = 0; j < numFields; ++j) {

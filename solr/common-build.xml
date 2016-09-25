@@ -37,6 +37,7 @@
   <property name="maven.dist.dir" location="${package.dir}/maven"/>
   <property name="lucene-libs" location="${dest}/lucene-libs" />
   <property name="tests.userdir" location="src/test-files"/>
+  <property name="server.dir" location="${common-solr.dir}/server" />
   <property name="example" location="${common-solr.dir}/example" />
   <property name="javadoc.dir" location="${dest}/docs"/>
   <property name="tests.cleanthreads.sysprop" value="perClass"/>
@@ -70,7 +71,7 @@
   <path id="additional.dependencies">
   	<fileset dir="${common-solr.dir}/core/lib" excludes="${common.classpath.excludes}"/>
   	<fileset dir="${common-solr.dir}/solrj/lib" excludes="${common.classpath.excludes}"/>
-  	<fileset dir="${common-solr.dir}/example/lib" excludes="${common.classpath.excludes}"/>
+  	<fileset dir="${common-solr.dir}/server/lib" excludes="${common.classpath.excludes}"/>
   	<fileset dir="${common-solr.dir}/example/example-DIH/solr/db/lib" excludes="${common.classpath.excludes}"/>  	
   	<fileset dir="lib" excludes="${common.classpath.excludes}" erroronmissingdir="false"/>
   </path>
@@ -88,6 +89,7 @@
     <pathelement location="${analyzers-kuromoji.jar}"/>
     <pathelement location="${analyzers-phonetic.jar}"/>
     <pathelement location="${codecs.jar}"/>
+    <pathelement location="${backward-codecs.jar}"/>
     <pathelement location="${highlighter.jar}"/>
     <pathelement location="${memory.jar}"/>
     <pathelement location="${misc.jar}"/>
@@ -139,10 +141,16 @@
     </sequential>
   </macrodef>
 
-  <!-- we don't want to run HDFS tests on Windows, because they require Cygwin.
-    If you have Cygwin, you can override this property on command line: -->
+  <!-- 
+    - We don't test HDFS on Java 7 because it causes permgen errors. Java 8 no longer has permgen.
+    - We don't want to run HDFS tests on Windows, because they require Cygwin.
+    If you have Cygwin or manually raised permgen, you can override this property on command line:
+  -->
   <condition property="tests.disableHdfs" value="true">
-    <os family="windows"/>
+    <or>
+      <equals arg1="${build.java.runtime}" arg2="1.7"/>
+      <os family="windows"/>
+    </or>
   </condition>
 
   <target name="validate" depends="compile-tools">
@@ -156,7 +164,7 @@
   </target>
 
   <target name="prep-lucene-jars" 
-  	      depends="jar-lucene-core, jar-analyzers-phonetic, jar-analyzers-kuromoji, jar-codecs,jar-expressions, jar-suggest, jar-highlighter, jar-memory,
+  	      depends="jar-lucene-core, jar-backward-codecs, jar-analyzers-phonetic, jar-analyzers-kuromoji, jar-codecs,jar-expressions, jar-suggest, jar-highlighter, jar-memory,
   	               jar-misc, jar-spatial, jar-grouping, jar-queries, jar-queryparser, jar-join">
   	  <property name="solr.deps.compiled" value="true"/>
   </target>
@@ -223,7 +231,7 @@
     <solr-jarify/>
   </target>
 
-  <target name="compile-core" depends="prep-lucene-jars,resolve-example,common.compile-core"/>
+  <target name="compile-core" depends="prep-lucene-jars,resolve-example,resolve-server,common.compile-core"/>
   <target name="compile-test" depends="compile-solr-test-framework,common.compile-test"/>
 
   <target name="dist" depends="jar-core">
@@ -233,7 +241,7 @@
   <property name="lucenedocs" location="${common.dir}/build/docs"/>
 
   <!-- dependency to ensure all lucene javadocs are present -->
-  <target name="lucene-javadocs" depends="javadocs-lucene-core,javadocs-analyzers-common,javadocs-analyzers-icu,javadocs-analyzers-kuromoji,javadocs-analyzers-phonetic,javadocs-analyzers-smartcn,javadocs-analyzers-morfologik,javadocs-analyzers-stempel,javadocs-analyzers-uima,javadocs-codecs,javadocs-expressions,javadocs-suggest,javadocs-grouping,javadocs-queries,javadocs-queryparser,javadocs-highlighter,javadocs-memory,javadocs-misc,javadocs-spatial,javadocs-test-framework"/>
+  <target name="lucene-javadocs" depends="javadocs-lucene-core,javadocs-analyzers-common,javadocs-analyzers-icu,javadocs-analyzers-kuromoji,javadocs-analyzers-phonetic,javadocs-analyzers-smartcn,javadocs-analyzers-morfologik,javadocs-analyzers-stempel,javadocs-analyzers-uima,javadocs-backward-codecs,javadocs-codecs,javadocs-expressions,javadocs-suggest,javadocs-grouping,javadocs-queries,javadocs-queryparser,javadocs-highlighter,javadocs-memory,javadocs-misc,javadocs-spatial,javadocs-test-framework"/>
 
   <!-- create javadocs for the current module -->
   <target name="javadocs" depends="compile-core,define-lucene-javadoc-url,lucene-javadocs,javadocs-solr-core,check-javadocs-uptodate" unless="javadocs-uptodate-${name}">
@@ -299,6 +307,7 @@
           <link offline="true" href="${lucene.javadoc.url}analyzers-smartcn" packagelistloc="${lucenedocs}/analyzers-smartcn"/>
           <link offline="true" href="${lucene.javadoc.url}analyzers-stempel" packagelistloc="${lucenedocs}/analyzers-stempel"/>
           <link offline="true" href="${lucene.javadoc.url}analyzers-uima" packagelistloc="${lucenedocs}/analyzers-uima"/>
+          <link offline="true" href="${lucene.javadoc.url}backward-codecs" packagelistloc="${lucenedocs}/backward-codecs"/>
           <link offline="true" href="${lucene.javadoc.url}codecs" packagelistloc="${lucenedocs}/codecs"/>
           <link offline="true" href="${lucene.javadoc.url}expressions" packagelistloc="${lucenedocs}/expressions"/>
           <link offline="true" href="${lucene.javadoc.url}suggest" packagelistloc="${lucenedocs}/suggest"/>
@@ -422,13 +431,18 @@
 
   <!-- resolve dependencies in the example (relied upon by compile/tests) -->
   <target name="resolve-example" unless="example.libs.uptodate">
-    <ant dir="${common-solr.dir}/example" target="resolve" inheritAll="false">
-      <propertyset refid="uptodate.and.compiled.properties"/>
-    </ant>
     <ant dir="${common-solr.dir}/example/example-DIH" target="resolve" inheritAll="false">
       <propertyset refid="uptodate.and.compiled.properties"/>
     </ant>
     <property name="example.libs.uptodate" value="true"/>
+  </target>
+
+  <!-- resolve dependencies in the server directory (relied upon by compile/tests) -->
+  <target name="resolve-server" unless="server.libs.uptodate">
+    <ant dir="${common-solr.dir}/server" target="resolve" inheritAll="false">
+      <propertyset refid="uptodate.and.compiled.properties"/>
+    </ant>
+    <property name="server.libs.uptodate" value="true"/>
   </target>
 
   <macrodef name="contrib-crawl">

@@ -22,6 +22,8 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -32,14 +34,17 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import org.apache.solr.cloud.ZkController;
+import org.apache.solr.cloud.ZkSolrResourceLoader;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
 import org.apache.solr.common.util.ExecutorUtil;
+import org.apache.solr.handler.RequestHandlerBase;
 import org.apache.solr.handler.admin.CollectionsHandler;
 import org.apache.solr.handler.admin.CoreAdminHandler;
 import org.apache.solr.handler.admin.InfoHandler;
 import org.apache.solr.handler.component.ShardHandlerFactory;
 import org.apache.solr.logging.LogWatcher;
+import org.apache.solr.request.SolrRequestHandler;
 import org.apache.solr.update.UpdateShardHandler;
 import org.apache.solr.util.DefaultSolrThreadFactory;
 import org.apache.solr.util.FileUtils;
@@ -99,6 +104,17 @@ public class CoreContainer {
   
   private String hostName;
   
+  private Map<String ,SolrRequestHandler> containerHandlers = new HashMap<>();
+
+  public SolrRequestHandler getRequestHandler(String path) {
+    return RequestHandlerBase.getRequestHandler(path, containerHandlers);
+  }
+
+  public Map<String, SolrRequestHandler> getRequestHandlers(){
+    return this.containerHandlers;
+
+  }
+
  // private ClientConnectionManager clientConnectionManager = new PoolingClientConnectionManager();
 
   {
@@ -222,8 +238,11 @@ public class CoreContainer {
     zkSys.initZooKeeper(this, solrHome, cfg);
 
     collectionsHandler = createHandler(cfg.getCollectionsHandlerClass(), CollectionsHandler.class);
+    containerHandlers.put("/admin/collections" , collectionsHandler);
     infoHandler        = createHandler(cfg.getInfoHandlerClass(), InfoHandler.class);
+    containerHandlers.put("/admin/info" , infoHandler);
     coreAdminHandler   = createHandler(cfg.getCoreAdminHandlerClass(), CoreAdminHandler.class);
+    containerHandlers.put(cfg.getAdminPath() , coreAdminHandler);
 
     coreConfigService = cfg.createCoreConfigService(loader, zkSys.getZkController());
 
@@ -665,6 +684,7 @@ public class CoreContainer {
       // cancel recovery in cloud mode
       core.getSolrCoreState().cancelRecovery();
     }
+    String configSetZkPath =  core.getResourceLoader() instanceof ZkSolrResourceLoader ?  ((ZkSolrResourceLoader)core.getResourceLoader()).getConfigSetZkPath() : null;
 
     core.unloadOnClose(deleteIndexDir, deleteDataDir, deleteInstanceDir);
     if (close)
@@ -672,7 +692,7 @@ public class CoreContainer {
 
     if (zkSys.getZkController() != null) {
       try {
-        zkSys.getZkController().unregister(name, cd);
+        zkSys.getZkController().unregister(name, cd, configSetZkPath);
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         throw new SolrException(ErrorCode.SERVER_ERROR, "Interrupted while unregistering core [" + name + "] from cloud state");
@@ -919,5 +939,5 @@ class CloserThread extends Thread {
       }
     }
   }
-  
+
 }

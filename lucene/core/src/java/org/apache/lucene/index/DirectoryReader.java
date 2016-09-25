@@ -26,7 +26,6 @@ import java.util.List;
 
 import org.apache.lucene.search.SearcherManager; // javadocs
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.NoSuchDirectoryException;
 
 /** DirectoryReader is an implementation of {@link CompositeReader}
  that can read indexes in a {@link Directory}. 
@@ -50,7 +49,7 @@ import org.apache.lucene.store.NoSuchDirectoryException;
  <code>IndexReader</code> instance; use your own
  (non-Lucene) objects instead.
 */
-public abstract class DirectoryReader extends BaseCompositeReader<AtomicReader> {
+public abstract class DirectoryReader extends BaseCompositeReader<LeafReader> {
 
   /** The index directory. */
   protected final Directory directory;
@@ -226,8 +225,7 @@ public abstract class DirectoryReader extends BaseCompositeReader<AtomicReader> 
 
     List<IndexCommit> commits = new ArrayList<>();
 
-    SegmentInfos latest = new SegmentInfos();
-    latest.read(dir);
+    SegmentInfos latest = SegmentInfos.readLatestCommit(dir);
     final long currentGen = latest.getGeneration();
 
     commits.add(new StandardDirectoryReader.ReaderCommit(latest, dir));
@@ -237,14 +235,14 @@ public abstract class DirectoryReader extends BaseCompositeReader<AtomicReader> 
       final String fileName = files[i];
 
       if (fileName.startsWith(IndexFileNames.SEGMENTS) &&
-          !fileName.equals(IndexFileNames.SEGMENTS_GEN) &&
+          !fileName.equals(IndexFileNames.OLD_SEGMENTS_GEN) &&
           SegmentInfos.generationFromSegmentsFileName(fileName) < currentGen) {
 
-        SegmentInfos sis = new SegmentInfos();
+        SegmentInfos sis = null;
         try {
           // IOException allowed to throw there, in case
           // segments_N is corrupt
-          sis.read(dir, fileName);
+          sis = SegmentInfos.readCommit(dir, fileName);
         } catch (FileNotFoundException | NoSuchFileException fnfe) {
           // LUCENE-948: on NFS (and maybe others), if
           // you have writers switching back and forth
@@ -253,7 +251,6 @@ public abstract class DirectoryReader extends BaseCompositeReader<AtomicReader> 
           // file segments_X exists when in fact it
           // doesn't.  So, we catch this and handle it
           // as if the file does not exist
-          sis = null;
         }
 
         if (sis != null)
@@ -288,22 +285,12 @@ public abstract class DirectoryReader extends BaseCompositeReader<AtomicReader> 
     // corrupt indices.  This means that IndexWriter will
     // throw an exception on such indices and the app must
     // resolve the situation manually:
-    String[] files;
-    try {
-      files = directory.listAll();
-    } catch (NoSuchDirectoryException nsde) {
-      // Directory does not exist --> no index exists
-      return false;
-    }
+    String[] files = directory.listAll();
 
-    // Defensive: maybe a Directory impl returns null
-    // instead of throwing NoSuchDirectoryException:
-    if (files != null) {
-      String prefix = IndexFileNames.SEGMENTS + "_";
-      for(String file : files) {
-        if (file.startsWith(prefix) || file.equals(IndexFileNames.SEGMENTS_GEN)) {
-          return true;
-        }
+    String prefix = IndexFileNames.SEGMENTS + "_";
+    for(String file : files) {
+      if (file.startsWith(prefix)) {
+        return true;
       }
     }
     return false;
@@ -318,7 +305,7 @@ public abstract class DirectoryReader extends BaseCompositeReader<AtomicReader> 
    * Subclasses of {@code DirectoryReader} should take care to not allow
    * modification of this internal array, e.g. {@link #doOpenIfChanged()}.
    */
-  protected DirectoryReader(Directory directory, AtomicReader[] segmentReaders) {
+  protected DirectoryReader(Directory directory, LeafReader[] segmentReaders) {
     super(segmentReaders);
     this.directory = directory;
   }

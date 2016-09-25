@@ -35,6 +35,8 @@ import org.apache.lucene.analysis.MockTokenizer;
 import org.apache.lucene.analysis.Token;
 import org.apache.lucene.analysis.TokenFilter;
 import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
+import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 import org.apache.lucene.document.BinaryDocValuesField;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
@@ -46,7 +48,6 @@ import org.apache.lucene.document.SortedSetDocValuesField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.PhraseQuery;
@@ -56,8 +57,8 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
-import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.MockDirectoryWrapper.FakeIOException;
+import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
@@ -87,7 +88,7 @@ public class TestIndexWriterExceptions extends LuceneTestCase {
       custom1.setStoreTermVectorOffsets(true);
       
       custom2.setStored(true);
-      custom2.setIndexed(true);
+      custom2.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS);
       
       custom3.setStored(true);
 
@@ -156,14 +157,10 @@ public class TestIndexWriterExceptions extends LuceneTestCase {
       doc.add(new NumericDocValuesField("numericdv", 5));
       doc.add(new BinaryDocValuesField("binarydv", new BytesRef("hello")));
       doc.add(new SortedDocValuesField("sorteddv", new BytesRef("world")));
-      if (defaultCodecSupportsSortedSet()) {
-        doc.add(new SortedSetDocValuesField("sortedsetdv", new BytesRef("hellllo")));
-        doc.add(new SortedSetDocValuesField("sortedsetdv", new BytesRef("again")));
-      }
-      if (defaultCodecSupportsSortedNumeric()) {
-        doc.add(new SortedNumericDocValuesField("sortednumericdv", 10));
-        doc.add(new SortedNumericDocValuesField("sortednumericdv", 5));
-      }
+      doc.add(new SortedSetDocValuesField("sortedsetdv", new BytesRef("hellllo")));
+      doc.add(new SortedSetDocValuesField("sortedsetdv", new BytesRef("again")));
+      doc.add(new SortedNumericDocValuesField("sortednumericdv", 10));
+      doc.add(new SortedNumericDocValuesField("sortednumericdv", 5));
 
       doc.add(newField(r, "content7", "aaa bbb ccc ddd", DocCopyIterator.custom4));
 
@@ -1115,7 +1112,8 @@ public class TestIndexWriterExceptions extends LuceneTestCase {
 
   // LUCENE-1044: Simulate checksum error in segments_N
   public void testSegmentsChecksumError() throws IOException {
-    Directory dir = newDirectory();
+    BaseDirectoryWrapper dir = newDirectory();
+    dir.setCheckIndexOnClose(false); // we corrupt the index
 
     IndexWriter writer = null;
 
@@ -1141,17 +1139,12 @@ public class TestIndexWriterExceptions extends LuceneTestCase {
     out.close();
     in.close();
 
-    IndexReader reader = null;
     try {
-      reader = DirectoryReader.open(dir);
-    } catch (IOException e) {
-      e.printStackTrace(System.out);
-      fail("segmentInfos failed to retry fallback to correct segments_N file");
+      DirectoryReader.open(dir);
+      fail("didn't get expected checksum error");
+    } catch (CorruptIndexException expected) {
     }
-    reader.close();
-    
-    // should remove the corrumpted segments_N
-    new IndexWriter(dir, newIndexWriterConfig(null)).close();
+
     dir.close();
   }
 
@@ -1240,17 +1233,18 @@ public class TestIndexWriterExceptions extends LuceneTestCase {
 
     long gen = SegmentInfos.getLastCommitGeneration(dir);
     assertTrue("segment generation should be > 0 but got " + gen, gen > 0);
-
-    String[] files = dir.listAll();
+    
     boolean corrupted = false;
-    for(int i=0;i<files.length;i++) {
-      if (files[i].endsWith(".cfs")) {
-        dir.deleteFile(files[i]);
-        corrupted = true;
-        break;
-      }
+    SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
+    for (SegmentCommitInfo si : sis) {
+      assertTrue(si.info.getUseCompoundFile());
+      String cfsFiles[] = si.info.getCodec().compoundFormat().files(si.info);
+      dir.deleteFile(cfsFiles[0]);
+      corrupted = true;
+      break;
     }
-    assertTrue("failed to find cfs file to remove", corrupted);
+
+    assertTrue("failed to find cfs file to remove: ", corrupted);
 
     IndexReader reader = null;
     try {
@@ -1262,73 +1256,6 @@ public class TestIndexWriterExceptions extends LuceneTestCase {
       reader.close();
     }
     dir.close();
-  }
-
-  // Simulate a writer that crashed while writing segments
-  // file: make sure we can still open the index (ie,
-  // gracefully fallback to the previous segments file),
-  // and that we can add to the index:
-  public void testSimulatedCrashedWriter() throws IOException {
-      Directory dir = newDirectory();
-      if (dir instanceof MockDirectoryWrapper) {
-        ((MockDirectoryWrapper)dir).setPreventDoubleWrite(false);
-      }
-
-      IndexWriter writer = null;
-
-      writer  = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())));
-
-      // add 100 documents
-      for (int i = 0; i < 100; i++) {
-          addDoc(writer);
-      }
-
-      // close
-      writer.close();
-
-      long gen = SegmentInfos.getLastCommitGeneration(dir);
-      assertTrue("segment generation should be > 0 but got " + gen, gen > 0);
-
-      // Make the next segments file, with last byte
-      // missing, to simulate a writer that crashed while
-      // writing segments file:
-      String fileNameIn = SegmentInfos.getLastCommitSegmentsFileName(dir);
-      String fileNameOut = IndexFileNames.fileNameFromGeneration(IndexFileNames.SEGMENTS,
-                                                                 "",
-                                                                 1+gen);
-      IndexInput in = dir.openInput(fileNameIn, newIOContext(random()));
-      IndexOutput out = dir.createOutput(fileNameOut, newIOContext(random()));
-      long length = in.length();
-      for(int i=0;i<length-1;i++) {
-        out.writeByte(in.readByte());
-      }
-      in.close();
-      out.close();
-
-      IndexReader reader = null;
-      try {
-        reader = DirectoryReader.open(dir);
-      } catch (Exception e) {
-        fail("reader failed to open on a crashed index");
-      }
-      reader.close();
-
-      try {
-        writer  = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
-                                         .setOpenMode(OpenMode.CREATE));
-      } catch (Exception e) {
-        e.printStackTrace(System.out);
-        fail("writer failed to open on a crashed index");
-      }
-
-      // add 100 documents
-      for (int i = 0; i < 100; i++) {
-          addDoc(writer);
-      }
-
-      // close
-      writer.close();
-      dir.close();
   }
 
   public void testTermVectorExceptions() throws IOException {
@@ -1385,9 +1312,8 @@ public class TestIndexWriterExceptions extends LuceneTestCase {
         w.close();
         IndexReader reader = DirectoryReader.open(dir);
         assertTrue(reader.numDocs() > 0);
-        SegmentInfos sis = new SegmentInfos();
-        sis.read(dir);
-        for(AtomicReaderContext context : reader.leaves()) {
+        SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
+        for(LeafReaderContext context : reader.leaves()) {
           assertFalse(context.reader().getFieldInfos().hasVectors());
         }
         reader.close();
@@ -1753,7 +1679,7 @@ public class TestIndexWriterExceptions extends LuceneTestCase {
       if (doFail && name.startsWith("segments_")) {
         StackTraceElement[] trace = new Exception().getStackTrace();
         for (int i = 0; i < trace.length; i++) {
-          if ("read".equals(trace[i].getMethodName())) {
+          if ("readCommit".equals(trace[i].getMethodName()) || "readLatestCommit".equals(trace[i].getMethodName())) {
             throw new UnsupportedOperationException("expected UOE");
           }
         }
@@ -2054,10 +1980,9 @@ public class TestIndexWriterExceptions extends LuceneTestCase {
       shouldFail.set(true);
       boolean doClose = false;
       try {
-        boolean defaultCodecSupportsFieldUpdates = defaultCodecSupportsFieldUpdates();
         for(int i=0;i<numDocs;i++) {
           if (random().nextInt(10) == 7) {
-            boolean fieldUpdate = defaultCodecSupportsFieldUpdates && random().nextBoolean();
+            boolean fieldUpdate = random().nextBoolean();
             int docid = docBase + i;
             if (fieldUpdate) {
               long value = iter;
@@ -2152,8 +2077,8 @@ public class TestIndexWriterExceptions extends LuceneTestCase {
       }
       assertEquals(docCount-deleteCount, r.numDocs());
       BytesRef scratch = new BytesRef();
-      for (AtomicReaderContext context : r.leaves()) {
-        AtomicReader reader = context.reader();
+      for (LeafReaderContext context : r.leaves()) {
+        LeafReader reader = context.reader();
         Bits liveDocs = reader.getLiveDocs();
         NumericDocValues f = reader.getNumericDocValues("f");
         NumericDocValues cf = reader.getNumericDocValues("cf");
@@ -2190,6 +2115,48 @@ public class TestIndexWriterExceptions extends LuceneTestCase {
     assertEquals(docCount-deleteCount, r.numDocs());
     r.close();
 
+    dir.close();
+  }
+  
+  // kind of slow, but omits positions, so just CPU
+  @Nightly
+  public void testTooManyTokens() throws Exception {
+    Directory dir = newDirectory();
+    IndexWriter iw = new IndexWriter(dir, newIndexWriterConfig(null));
+    Document doc = new Document();
+    FieldType ft = new FieldType(TextField.TYPE_NOT_STORED);
+    ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS);
+    doc.add(new Field("foo", new TokenStream() {
+      CharTermAttribute termAtt = addAttribute(CharTermAttribute.class);
+      PositionIncrementAttribute posIncAtt = addAttribute(PositionIncrementAttribute.class);
+      long num = 0;
+      
+      @Override
+      public boolean incrementToken() throws IOException {
+        if (num == Integer.MAX_VALUE + 1) {
+          return false;
+        }
+        clearAttributes();
+        if (num == 0) {
+          posIncAtt.setPositionIncrement(1);
+        } else {
+          posIncAtt.setPositionIncrement(0);
+        }
+        termAtt.append("a");
+        num++;
+        if (VERBOSE && num % 1000000 == 0) {
+          System.out.println("indexed: " + num);
+        }
+        return true;
+      }
+    }, ft));
+    try {
+      iw.addDocument(doc);
+      fail("didn't hit exception");
+    } catch (IllegalArgumentException expected) {
+      assertTrue(expected.getMessage().contains("too many tokens"));
+    }
+    iw.close();
     dir.close();
   }
   

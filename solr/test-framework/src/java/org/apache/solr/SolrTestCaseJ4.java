@@ -91,6 +91,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.net.URL;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -153,7 +154,7 @@ public abstract class SolrTestCaseJ4 extends LuceneTestCase {
   @BeforeClass 
   @SuppressWarnings("unused")
   private static void beforeClass() {
-    initCoreDataDir = createTempDir("init-core-data");
+    initCoreDataDir = createTempDir("init-core-data").toFile();
 
     System.err.println("Creating dataDir: " + initCoreDataDir.getAbsolutePath());
 
@@ -303,7 +304,13 @@ public abstract class SolrTestCaseJ4 extends LuceneTestCase {
 
     System.setProperty("solr.tests.maxBufferedDocs", String.valueOf(iwc.getMaxBufferedDocs()));
     System.setProperty("solr.tests.ramBufferSizeMB", String.valueOf(iwc.getRAMBufferSizeMB()));
-    System.setProperty("solr.tests.mergeScheduler", iwc.getMergeScheduler().getClass().getName());
+
+    String mergeSchedulerClass = iwc.getMergeScheduler().getClass().getName();
+    if (mergeSchedulerClass.contains("$")) {
+      // anonymous subclass - we can't instantiate via the resource loader, so use CMS instead
+      mergeSchedulerClass = "org.apache.lucene.index.ConcurrentMergeScheduler";
+    }
+    System.setProperty("solr.tests.mergeScheduler", mergeSchedulerClass);
 
     // don't ask iwc.getMaxThreadStates(), sometimes newIWC uses 
     // RandomDocumentsWriterPerThreadPool and all hell breaks loose
@@ -1038,12 +1045,12 @@ public abstract class SolrTestCaseJ4 extends LuceneTestCase {
   }
 
   /**
-   * @see TestUtil#rm(File...)
+   * @see IOUtils#rm(Path...)
    */
   @Deprecated()
   public static boolean recurseDelete(File f) {
     try {
-      TestUtil.rm(f);
+      IOUtils.rm(f.toPath());
       return true;
     } catch (IOException e) {
       System.err.println(e.toString());

@@ -18,12 +18,15 @@ package org.apache.lucene.index;
  */
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import org.apache.lucene.index.MultiTermsEnum.TermsEnumIndex;
 import org.apache.lucene.index.MultiTermsEnum.TermsEnumWithSlice;
 import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.InPlaceMergeSorter;
@@ -38,7 +41,7 @@ import org.apache.lucene.util.packed.PackedLongValues;
  * <p><b>NOTE</b>: for multi readers, you'll get better
  * performance by gathering the sub readers using
  * {@link IndexReader#getContext()} to get the
- * atomic leaves and then operate per-AtomicReader,
+ * atomic leaves and then operate per-LeafReader,
  * instead of using this class.
  * 
  * <p><b>NOTE</b>: This is very costly.
@@ -54,11 +57,11 @@ public class MultiDocValues {
   /** Returns a NumericDocValues for a reader's norms (potentially merging on-the-fly).
    * <p>
    * This is a slow way to access normalization values. Instead, access them per-segment
-   * with {@link AtomicReader#getNormValues(String)}
+   * with {@link LeafReader#getNormValues(String)}
    * </p> 
    */
   public static NumericDocValues getNormValues(final IndexReader r, final String field) throws IOException {
-    final List<AtomicReaderContext> leaves = r.leaves();
+    final List<LeafReaderContext> leaves = r.leaves();
     final int size = leaves.size();
     if (size == 0) {
       return null;
@@ -74,7 +77,7 @@ public class MultiDocValues {
     final NumericDocValues[] values = new NumericDocValues[size];
     final int[] starts = new int[size+1];
     for (int i = 0; i < size; i++) {
-      AtomicReaderContext context = leaves.get(i);
+      LeafReaderContext context = leaves.get(i);
       NumericDocValues v = context.reader().getNormValues(field);
       if (v == null) {
         v = DocValues.emptyNumeric();
@@ -100,11 +103,11 @@ public class MultiDocValues {
   /** Returns a NumericDocValues for a reader's docvalues (potentially merging on-the-fly) 
    * <p>
    * This is a slow way to access numeric values. Instead, access them per-segment
-   * with {@link AtomicReader#getNumericDocValues(String)}
+   * with {@link LeafReader#getNumericDocValues(String)}
    * </p> 
    * */
   public static NumericDocValues getNumericValues(final IndexReader r, final String field) throws IOException {
-    final List<AtomicReaderContext> leaves = r.leaves();
+    final List<LeafReaderContext> leaves = r.leaves();
     final int size = leaves.size();
     if (size == 0) {
       return null;
@@ -116,7 +119,7 @@ public class MultiDocValues {
     final NumericDocValues[] values = new NumericDocValues[size];
     final int[] starts = new int[size+1];
     for (int i = 0; i < size; i++) {
-      AtomicReaderContext context = leaves.get(i);
+      LeafReaderContext context = leaves.get(i);
       NumericDocValues v = context.reader().getNumericDocValues(field);
       if (v == null) {
         v = DocValues.emptyNumeric();
@@ -144,11 +147,11 @@ public class MultiDocValues {
   /** Returns a Bits for a reader's docsWithField (potentially merging on-the-fly) 
    * <p>
    * This is a slow way to access this bitset. Instead, access them per-segment
-   * with {@link AtomicReader#getDocsWithField(String)}
+   * with {@link LeafReader#getDocsWithField(String)}
    * </p> 
    * */
   public static Bits getDocsWithField(final IndexReader r, final String field) throws IOException {
-    final List<AtomicReaderContext> leaves = r.leaves();
+    final List<LeafReaderContext> leaves = r.leaves();
     final int size = leaves.size();
     if (size == 0) {
       return null;
@@ -161,7 +164,7 @@ public class MultiDocValues {
     final Bits[] values = new Bits[size];
     final int[] starts = new int[size+1];
     for (int i = 0; i < size; i++) {
-      AtomicReaderContext context = leaves.get(i);
+      LeafReaderContext context = leaves.get(i);
       Bits v = context.reader().getDocsWithField(field);
       if (v == null) {
         v = new Bits.MatchNoBits(context.reader().maxDoc());
@@ -189,11 +192,11 @@ public class MultiDocValues {
   /** Returns a BinaryDocValues for a reader's docvalues (potentially merging on-the-fly)
    * <p>
    * This is a slow way to access binary values. Instead, access them per-segment
-   * with {@link AtomicReader#getBinaryDocValues(String)}
+   * with {@link LeafReader#getBinaryDocValues(String)}
    * </p>  
    */
   public static BinaryDocValues getBinaryValues(final IndexReader r, final String field) throws IOException {
-    final List<AtomicReaderContext> leaves = r.leaves();
+    final List<LeafReaderContext> leaves = r.leaves();
     final int size = leaves.size();
     
     if (size == 0) {
@@ -206,7 +209,7 @@ public class MultiDocValues {
     final BinaryDocValues[] values = new BinaryDocValues[size];
     final int[] starts = new int[size+1];
     for (int i = 0; i < size; i++) {
-      AtomicReaderContext context = leaves.get(i);
+      LeafReaderContext context = leaves.get(i);
       BinaryDocValues v = context.reader().getBinaryDocValues(field);
       if (v == null) {
         v = DocValues.emptyBinary();
@@ -234,11 +237,11 @@ public class MultiDocValues {
   /** Returns a SortedNumericDocValues for a reader's docvalues (potentially merging on-the-fly) 
    * <p>
    * This is a slow way to access sorted numeric values. Instead, access them per-segment
-   * with {@link AtomicReader#getSortedNumericDocValues(String)}
+   * with {@link LeafReader#getSortedNumericDocValues(String)}
    * </p> 
    * */
   public static SortedNumericDocValues getSortedNumericValues(final IndexReader r, final String field) throws IOException {
-    final List<AtomicReaderContext> leaves = r.leaves();
+    final List<LeafReaderContext> leaves = r.leaves();
     final int size = leaves.size();
     if (size == 0) {
       return null;
@@ -250,7 +253,7 @@ public class MultiDocValues {
     final SortedNumericDocValues[] values = new SortedNumericDocValues[size];
     final int[] starts = new int[size+1];
     for (int i = 0; i < size; i++) {
-      AtomicReaderContext context = leaves.get(i);
+      LeafReaderContext context = leaves.get(i);
       SortedNumericDocValues v = context.reader().getSortedNumericDocValues(field);
       if (v == null) {
         v = DocValues.emptySortedNumeric(context.reader().maxDoc());
@@ -291,11 +294,11 @@ public class MultiDocValues {
   /** Returns a SortedDocValues for a reader's docvalues (potentially doing extremely slow things).
    * <p>
    * This is an extremely slow way to access sorted values. Instead, access them per-segment
-   * with {@link AtomicReader#getSortedDocValues(String)}
+   * with {@link LeafReader#getSortedDocValues(String)}
    * </p>  
    */
   public static SortedDocValues getSortedValues(final IndexReader r, final String field) throws IOException {
-    final List<AtomicReaderContext> leaves = r.leaves();
+    final List<LeafReaderContext> leaves = r.leaves();
     final int size = leaves.size();
     
     if (size == 0) {
@@ -308,7 +311,7 @@ public class MultiDocValues {
     final SortedDocValues[] values = new SortedDocValues[size];
     final int[] starts = new int[size+1];
     for (int i = 0; i < size; i++) {
-      AtomicReaderContext context = leaves.get(i);
+      LeafReaderContext context = leaves.get(i);
       SortedDocValues v = context.reader().getSortedDocValues(field);
       if (v == null) {
         v = DocValues.emptySorted();
@@ -331,11 +334,11 @@ public class MultiDocValues {
   /** Returns a SortedSetDocValues for a reader's docvalues (potentially doing extremely slow things).
    * <p>
    * This is an extremely slow way to access sorted values. Instead, access them per-segment
-   * with {@link AtomicReader#getSortedSetDocValues(String)}
+   * with {@link LeafReader#getSortedSetDocValues(String)}
    * </p>  
    */
   public static SortedSetDocValues getSortedSetValues(final IndexReader r, final String field) throws IOException {
-    final List<AtomicReaderContext> leaves = r.leaves();
+    final List<LeafReaderContext> leaves = r.leaves();
     final int size = leaves.size();
     
     if (size == 0) {
@@ -348,7 +351,7 @@ public class MultiDocValues {
     final SortedSetDocValues[] values = new SortedSetDocValues[size];
     final int[] starts = new int[size+1];
     for (int i = 0; i < size; i++) {
-      AtomicReaderContext context = leaves.get(i);
+      LeafReaderContext context = leaves.get(i);
       SortedSetDocValues v = context.reader().getSortedSetDocValues(field);
       if (v == null) {
         v = DocValues.emptySortedSet();
@@ -429,6 +432,10 @@ public class MultiDocValues {
         return BASE_RAM_BYTES_USED + RamUsageEstimator.sizeOf(newToOld) + RamUsageEstimator.sizeOf(oldToNew);
       }
 
+      @Override
+      public Iterable<? extends Accountable> getChildResources() {
+        return Collections.emptyList();
+      }
     }
 
     /**
@@ -633,6 +640,16 @@ public class MultiDocValues {
     @Override
     public long ramBytesUsed() {
       return ramBytesUsed;
+    }
+
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      List<Accountable> resources = new ArrayList<>();
+      resources.add(Accountables.namedAccountable("global ord deltas", globalOrdDeltas));
+      resources.add(Accountables.namedAccountable("first segments", firstSegments));
+      resources.add(Accountables.namedAccountable("segment map", segmentMap));
+      // TODO: would be nice to return actual child segment deltas too, but the optimizations are confusing
+      return resources;
     }
   }
   

@@ -46,7 +46,11 @@ public interface CollectionParams
     ADDREPLICA,
     OVERSEERSTATUS,
     LIST,
-    CLUSTERSTATUS;
+    CLUSTERSTATUS,
+    ADDREPLICAPROP,
+    DELETEREPLICAPROP,
+    BALANCESHARDUNIQUE,
+    REBALANCELEADERS;
     
     public static CollectionAction get( String p )
     {

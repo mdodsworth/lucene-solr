@@ -17,16 +17,15 @@ package org.apache.lucene.analysis;
  * limitations under the License.
  */
 
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.io.Reader;
 import java.io.StringReader;
 import java.io.StringWriter;
 import java.io.Writer;
-import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 
@@ -35,7 +34,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.Attribute;
@@ -569,15 +568,15 @@ public abstract class BaseTokenStreamTestCase extends LuceneTestCase {
         ft.setOmitNorms(true);
       }
       switch(random.nextInt(4)) {
-        case 0: ft.setIndexOptions(IndexOptions.DOCS_ONLY); break;
+        case 0: ft.setIndexOptions(IndexOptions.DOCS); break;
         case 1: ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS); break;
         case 2: ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS); break;
         default:
-                if (offsetsAreCorrect) {
-                  ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
-                } else {
-                  ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS);
-                }
+          if (offsetsAreCorrect) {
+            ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
+          } else {
+            ft.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS);
+          }
       }
       currentField = field = new Field("dummy", bogus, ft);
       doc.add(currentField);
@@ -896,7 +895,7 @@ public abstract class BaseTokenStreamTestCase extends LuceneTestCase {
   }
 
   protected void toDotFile(Analyzer a, String inputText, String localFileName) throws IOException {
-    Writer w = new OutputStreamWriter(new FileOutputStream(localFileName), StandardCharsets.UTF_8);
+    Writer w = Files.newBufferedWriter(Paths.get(localFileName), StandardCharsets.UTF_8);
     final TokenStream ts = a.tokenStream("field", inputText);
     ts.reset();
     new TokenStreamToDot(inputText, ts, new PrintWriter(w)).toDot();

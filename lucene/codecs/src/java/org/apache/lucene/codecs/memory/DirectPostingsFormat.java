@@ -26,12 +26,12 @@ import java.util.TreeMap;
 import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.PostingsFormat;
-import org.apache.lucene.codecs.lucene41.Lucene41PostingsFormat; // javadocs
+import org.apache.lucene.codecs.lucene50.Lucene50PostingsFormat; // javadocs
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.Fields;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.OrdTermState;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
@@ -41,6 +41,7 @@ import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.RAMOutputStream;
 import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
@@ -53,7 +54,7 @@ import org.apache.lucene.util.automaton.Transition;
 //   - build depth-N prefix hash?
 //   - or: longer dense skip lists than just next byte?
 
-/** Wraps {@link Lucene41PostingsFormat} format for on-disk
+/** Wraps {@link Lucene50PostingsFormat} format for on-disk
  *  storage, but then at read time loads and stores all
  *  terms & postings directly in RAM as byte[], int[].
  *
@@ -101,12 +102,12 @@ public final class DirectPostingsFormat extends PostingsFormat {
   
   @Override
   public FieldsConsumer fieldsConsumer(SegmentWriteState state) throws IOException {
-    return PostingsFormat.forName("Lucene41").fieldsConsumer(state);
+    return PostingsFormat.forName("Lucene50").fieldsConsumer(state);
   }
 
   @Override
   public FieldsProducer fieldsProducer(SegmentReadState state) throws IOException {
-    FieldsProducer postings = PostingsFormat.forName("Lucene41").fieldsProducer(state);
+    FieldsProducer postings = PostingsFormat.forName("Lucene50").fieldsProducer(state);
     if (state.context.context != IOContext.Context.MERGE) {
       FieldsProducer loadedPostings;
       try {
@@ -159,11 +160,21 @@ public final class DirectPostingsFormat extends PostingsFormat {
       }
       return sizeInBytes;
     }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Accountables.namedAccountables("field", fields);
+    }
 
     @Override
     public void checkIntegrity() throws IOException {
       // if we read entirely into ram, we already validated.
       // otherwise returned the raw postings reader
+    }
+
+    @Override
+    public String toString() {
+      return getClass().getSimpleName() + "(fields=" + fields.size() + ")";
     }
   }
 
@@ -196,6 +207,11 @@ public final class DirectPostingsFormat extends PostingsFormat {
         return BASE_RAM_BYTES_USED +
             ((postings!=null) ? RamUsageEstimator.sizeOf(postings) : 0) + 
             ((payloads!=null) ? RamUsageEstimator.sizeOf(payloads) : 0);
+      }
+
+      @Override
+      public Iterable<? extends Accountable> getChildResources() {
+        return Collections.emptyList();
       }
     }
 
@@ -244,6 +260,11 @@ public final class DirectPostingsFormat extends PostingsFormat {
          }
          
          return sizeInBytes;
+      }
+      
+      @Override
+      public Iterable<? extends Accountable> getChildResources() {
+        return Collections.emptyList();
       }
     }
 
@@ -306,7 +327,7 @@ public final class DirectPostingsFormat extends PostingsFormat {
 
       this.minSkipCount = minSkipCount;
 
-      hasFreq = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_ONLY) > 0;
+      hasFreq = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS) > 0;
       hasPos = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS) > 0;
       hasOffsets = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) > 0;
       hasPayloads = fieldInfo.hasPayloads();
@@ -521,6 +542,16 @@ public final class DirectPostingsFormat extends PostingsFormat {
       }
       
       return sizeInBytes;
+    }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Collections.emptyList();
+    }
+
+    @Override
+    public String toString() {
+      return "DirectTerms(terms=" + terms.length + ",postings=" + sumDocFreq + ",positions=" + sumTotalTermFreq + ",docs=" + docCount + ")";
     }
 
     // Compares in unicode (UTF8) order:
@@ -839,7 +870,7 @@ public final class DirectPostingsFormat extends PostingsFormat {
 
       @Override
       public DocsEnum docs(Bits liveDocs, DocsEnum reuse, int flags) {
-        // TODO: implement reuse, something like Pulsing:
+        // TODO: implement reuse
         // it's hairy!
 
         if (terms[termOrd] instanceof LowFreqTerm) {
@@ -916,7 +947,7 @@ public final class DirectPostingsFormat extends PostingsFormat {
           return null;
         }
 
-        // TODO: implement reuse, something like Pulsing:
+        // TODO: implement reuse
         // it's hairy!
 
         if (terms[termOrd] instanceof LowFreqTerm) {
@@ -1437,7 +1468,7 @@ public final class DirectPostingsFormat extends PostingsFormat {
 
       @Override
       public DocsEnum docs(Bits liveDocs, DocsEnum reuse, int flags) {
-        // TODO: implement reuse, something like Pulsing:
+        // TODO: implement reuse
         // it's hairy!
 
         if (terms[termOrd] instanceof LowFreqTerm) {
@@ -1473,7 +1504,7 @@ public final class DirectPostingsFormat extends PostingsFormat {
           return null;
         }
 
-        // TODO: implement reuse, something like Pulsing:
+        // TODO: implement reuse
         // it's hairy!
 
         if (terms[termOrd] instanceof LowFreqTerm) {

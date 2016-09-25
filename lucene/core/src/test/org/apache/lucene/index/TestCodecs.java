@@ -27,15 +27,9 @@ import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.FieldsProducer;
-import org.apache.lucene.codecs.lucene40.Lucene40RWCodec;
-import org.apache.lucene.codecs.lucene41.Lucene41RWCodec;
-import org.apache.lucene.codecs.lucene42.Lucene42RWCodec;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field.Store;
-import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.StringField;
-import org.apache.lucene.index.FieldInfo.DocValuesType;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
@@ -46,6 +40,7 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.StringHelper;
 import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.Version;
 import org.junit.BeforeClass;
@@ -93,38 +88,12 @@ public class TestCodecs extends LuceneTestCase {
       this.omitTF = omitTF;
       this.storePayloads = storePayloads;
       // TODO: change this test to use all three
-      fieldInfo = fieldInfos.addOrUpdate(name, new IndexableFieldType() {
-
-        @Override
-        public boolean indexed() { return true; }
-
-        @Override
-        public boolean stored() { return false; }
-
-        @Override
-        public boolean tokenized() { return false; }
-
-        @Override
-        public boolean storeTermVectors() { return false; }
-
-        @Override
-        public boolean storeTermVectorOffsets() { return false; }
-
-        @Override
-        public boolean storeTermVectorPositions() { return false; }
-
-        @Override
-        public boolean storeTermVectorPayloads() { return false; }
-
-        @Override
-        public boolean omitNorms() { return false; }
-
-        @Override
-        public IndexOptions indexOptions() { return omitTF ? IndexOptions.DOCS_ONLY : IndexOptions.DOCS_AND_FREQS_AND_POSITIONS; }
-
-        @Override
-        public DocValuesType docValueType() { return null; }
-      });
+      fieldInfo = fieldInfos.getOrAdd(name);
+      if (omitTF) {
+        fieldInfo.setIndexOptions(IndexOptions.DOCS);
+      } else {
+        fieldInfo.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS);
+      }
       if (storePayloads) {
         fieldInfo.setStorePayloads();
       }
@@ -250,10 +219,10 @@ public class TestCodecs extends LuceneTestCase {
     final FieldData[] fields = new FieldData[] {field};
     final FieldInfos fieldInfos = builder.finish();
     final Directory dir = newDirectory();
-    this.write(fieldInfos, dir, fields);
     Codec codec = Codec.getDefault();
-    final SegmentInfo si = new SegmentInfo(dir, Version.LATEST, SEGMENT, 10000, false, codec, null);
-
+    final SegmentInfo si = new SegmentInfo(dir, Version.LATEST, SEGMENT, 10000, false, codec, null, StringHelper.randomId());
+    
+    this.write(si, fieldInfos, dir, fields);
     final FieldsProducer reader = codec.postingsFormat().fieldsProducer(new SegmentReadState(dir, si, fieldInfos, newIOContext(random())));
 
     final Iterator<String> fieldsEnum = reader.iterator();
@@ -307,9 +276,9 @@ public class TestCodecs extends LuceneTestCase {
       System.out.println("TEST: now write postings");
     }
 
-    this.write(fieldInfos, dir, fields);
     Codec codec = Codec.getDefault();
-    final SegmentInfo si = new SegmentInfo(dir, Version.LATEST, SEGMENT, 10000, false, codec, null);
+    final SegmentInfo si = new SegmentInfo(dir, Version.LATEST, SEGMENT, 10000, false, codec, null, StringHelper.randomId());
+    this.write(si, fieldInfos, dir, fields);
 
     if (VERBOSE) {
       System.out.println("TEST: now read postings");
@@ -801,10 +770,9 @@ public class TestCodecs extends LuceneTestCase {
     }
   }
 
-  private void write(final FieldInfos fieldInfos, final Directory dir, final FieldData[] fields) throws Throwable {
+  private void write(SegmentInfo si, final FieldInfos fieldInfos, final Directory dir, final FieldData[] fields) throws Throwable {
 
-    final Codec codec = Codec.getDefault();
-    final SegmentInfo si = new SegmentInfo(dir, Version.LATEST, SEGMENT, 10000, false, codec, null);
+    final Codec codec = si.getCodec();
     final SegmentWriteState state = new SegmentWriteState(InfoStream.getDefault(), dir, si, fieldInfos, null, newIOContext(random()));
 
     Arrays.sort(fields);
@@ -839,38 +807,13 @@ public class TestCodecs extends LuceneTestCase {
     
     Term term = new Term("f", new BytesRef("doc"));
     DirectoryReader reader = DirectoryReader.open(dir);
-    for (AtomicReaderContext ctx : reader.leaves()) {
+    for (LeafReaderContext ctx : reader.leaves()) {
       DocsEnum de = ctx.reader().termDocsEnum(term);
       while (de.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
         assertEquals("wrong freq for doc " + de.docID(), 1, de.freq());
       }
     }
     reader.close();
-    
-    dir.close();
-  }
-  
-  public void testDisableImpersonation() throws Exception {
-    Codec[] oldCodecs = new Codec[] { new Lucene40RWCodec(), new Lucene41RWCodec(), new Lucene42RWCodec() };
-    Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
-    conf.setCodec(oldCodecs[random().nextInt(oldCodecs.length)]);
-    IndexWriter writer = new IndexWriter(dir, conf);
-    
-    Document doc = new Document();
-    doc.add(new StringField("f", "bar", Store.YES));
-    doc.add(new NumericDocValuesField("n", 18L));
-    
-    OLD_FORMAT_IMPERSONATION_IS_ACTIVE = false;
-    try {
-      writer.addDocument(doc);
-      writer.close();
-      fail("should not have succeeded to impersonate an old format!");
-    } catch (UnsupportedOperationException e) {
-      writer.rollback();
-    } finally {
-      OLD_FORMAT_IMPERSONATION_IS_ACTIVE = true;
-    }
     
     dir.close();
   }

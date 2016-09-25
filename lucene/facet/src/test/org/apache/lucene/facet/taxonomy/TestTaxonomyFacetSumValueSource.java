@@ -27,7 +27,6 @@ import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FloatDocValuesField;
-import org.apache.lucene.document.IntField;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.facet.FacetField;
@@ -39,7 +38,7 @@ import org.apache.lucene.facet.FacetsConfig;
 import org.apache.lucene.facet.LabelAndValue;
 import org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyReader;
 import org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyWriter;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
@@ -209,7 +208,7 @@ public class TestTaxonomyFacetSumValueSource extends FacetTestCase {
     RandomIndexWriter writer = new RandomIndexWriter(random(), dir);
 
     Document doc = new Document();
-    doc.add(new IntField("num", 10, Field.Store.NO));
+    doc.add(new NumericDocValuesField("num", 10));
     doc.add(new FacetField("a", "foo1"));
     writer.addDocument(config.build(taxoWriter, doc));
 
@@ -329,7 +328,7 @@ public class TestTaxonomyFacetSumValueSource extends FacetTestCase {
 
     ValueSource valueSource = new ValueSource() {
       @Override
-      public FunctionValues getValues(@SuppressWarnings("rawtypes") Map context, AtomicReaderContext readerContext) throws IOException {
+      public FunctionValues getValues(@SuppressWarnings("rawtypes") Map context, LeafReaderContext readerContext) throws IOException {
         final Scorer scorer = (Scorer) context.get("scorer");
         assert scorer != null;
         return new DoubleDocValues(this) {

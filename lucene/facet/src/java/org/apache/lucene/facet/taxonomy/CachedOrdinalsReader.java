@@ -18,13 +18,15 @@ package org.apache.lucene.facet.taxonomy;
  */
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
 
 import org.apache.lucene.codecs.DocValuesFormat;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.IntsRef;
 import org.apache.lucene.util.RamUsageEstimator;
@@ -65,7 +67,7 @@ public class CachedOrdinalsReader extends OrdinalsReader implements Accountable 
     this.source = source;
   }
 
-  private synchronized CachedOrds getCachedOrds(AtomicReaderContext context) throws IOException {
+  private synchronized CachedOrds getCachedOrds(LeafReaderContext context) throws IOException {
     Object cacheKey = context.reader().getCoreCacheKey();
     CachedOrds ords = ordsCache.get(cacheKey);
     if (ords == null) {
@@ -82,7 +84,7 @@ public class CachedOrdinalsReader extends OrdinalsReader implements Accountable 
   }
 
   @Override
-  public OrdinalsSegmentReader getReader(AtomicReaderContext context) throws IOException {
+  public OrdinalsSegmentReader getReader(LeafReaderContext context) throws IOException {
     final CachedOrds cachedOrds = getCachedOrds(context);
     return new OrdinalsSegmentReader() {
       @Override
@@ -146,6 +148,11 @@ public class CachedOrdinalsReader extends OrdinalsReader implements Accountable 
       }
       return mem;
     }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Collections.emptyList();
+    }
   }
 
   @Override
@@ -156,5 +163,10 @@ public class CachedOrdinalsReader extends OrdinalsReader implements Accountable 
     }
 
     return bytes;
+  }
+  
+  @Override
+  public synchronized Iterable<? extends Accountable> getChildResources() {
+    return Accountables.namedAccountables("segment", ordsCache);
   }
 }

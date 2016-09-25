@@ -16,14 +16,12 @@ package org.apache.lucene.queries.function.valuesource;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.queries.function.FunctionValues;
 import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.util.BytesRef;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -45,6 +43,35 @@ public abstract class MultiFunction extends ValueSource {
     return description(name(), sources);
   }
 
+  /**
+   * Helper utility for {@link FunctionValues} wrapping multiple {@link FunctionValues}
+   *
+   * @return true if <em>all</em> of the specified <code>values</code> 
+   *         {@link FunctionValues#exists} for the specified doc, else false.
+   */
+  public static boolean allExists(int doc, FunctionValues... values) {
+    for (FunctionValues v : values) {
+      if ( ! v.exists(doc) ) {
+        return false;
+      }
+    }
+    return true;
+  }
+  /**
+   * Helper utility for {@link FunctionValues} wrapping multiple {@link FunctionValues}
+   *
+   * @return true if <em>any</em> of the specified <code>values</code> 
+   *         {@link FunctionValues#exists} for the specified doc, else false.
+   */
+  public static boolean anyExists(int doc, FunctionValues... values) {
+    for (FunctionValues v : values) {
+      if ( v.exists(doc) ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public static String description(String name, List<ValueSource> sources) {
     StringBuilder sb = new StringBuilder();
     sb.append(name).append('(');
@@ -61,7 +88,7 @@ public abstract class MultiFunction extends ValueSource {
     return sb.toString();
   }
 
-  public static FunctionValues[] valsArr(List<ValueSource> sources, Map fcontext, AtomicReaderContext readerContext) throws IOException {
+  public static FunctionValues[] valsArr(List<ValueSource> sources, Map fcontext, LeafReaderContext readerContext) throws IOException {
     final FunctionValues[] valsArr = new FunctionValues[sources.size()];
     int i=0;
     for (ValueSource source : sources) {

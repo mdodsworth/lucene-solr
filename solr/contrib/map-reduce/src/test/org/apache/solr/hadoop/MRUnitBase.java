@@ -18,6 +18,7 @@ package org.apache.solr.hadoop;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.Locale;
 
 import org.apache.commons.io.FileUtils;
@@ -44,12 +45,12 @@ public abstract class MRUnitBase extends SolrTestCaseJ4 {
 
   @AfterClass
   public static void teardownClass() throws Exception {
-    if (solrHomeZip != null) solrHomeZip.delete();
+    if (solrHomeZip != null) Files.delete(solrHomeZip.toPath());
   }
   
   protected void setupHadoopConfig(Configuration config) throws IOException {
     
-    String tempDir = createTempDir().getAbsolutePath();
+    String tempDir = createTempDir().toFile().getAbsolutePath();
 
     FileUtils.copyFile(new File(RESOURCES_DIR + "/custom-mimetypes.xml"), new File(tempDir + "/custom-mimetypes.xml"));
 

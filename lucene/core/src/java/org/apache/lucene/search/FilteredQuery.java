@@ -17,7 +17,7 @@ package org.apache.lucene.search;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.util.Bits;
@@ -98,7 +98,7 @@ public class FilteredQuery extends Query {
       }
 
       @Override
-      public Explanation explain(AtomicReaderContext ir, int i) throws IOException {
+      public Explanation explain(LeafReaderContext ir, int i) throws IOException {
         Explanation inner = weight.explain (ir, i);
         Filter f = FilteredQuery.this.filter;
         DocIdSet docIdSet = f.getDocIdSet(ir, ir.reader().getLiveDocs());
@@ -124,7 +124,7 @@ public class FilteredQuery extends Query {
 
       // return a filtering scorer
       @Override
-      public Scorer scorer(AtomicReaderContext context, Bits acceptDocs) throws IOException {
+      public Scorer scorer(LeafReaderContext context, Bits acceptDocs) throws IOException {
         assert filter != null;
 
         DocIdSet filterDocIdSet = filter.getDocIdSet(context, acceptDocs);
@@ -138,7 +138,7 @@ public class FilteredQuery extends Query {
 
       // return a filtering top scorer
       @Override
-      public BulkScorer bulkScorer(AtomicReaderContext context, boolean scoreDocsInOrder, Bits acceptDocs) throws IOException {
+      public BulkScorer bulkScorer(LeafReaderContext context, boolean scoreDocsInOrder, Bits acceptDocs) throws IOException {
         assert filter != null;
 
         DocIdSet filterDocIdSet = filter.getDocIdSet(context, acceptDocs);
@@ -254,12 +254,12 @@ public class FilteredQuery extends Query {
    * jumping past the target document. When both land on the same document, it's
    * collected.
    */
-  private static class LeapFrogScorer extends Scorer {
+  private static final class LeapFrogScorer extends Scorer {
     private final DocIdSetIterator secondary;
     private final DocIdSetIterator primary;
     private final Scorer scorer;
-    protected int primaryDoc = -1;
-    protected int secondaryDoc = -1;
+    private int primaryDoc = -1;
+    private int secondaryDoc = -1;
 
     protected LeapFrogScorer(Weight weight, DocIdSetIterator primary, DocIdSetIterator secondary, Scorer scorer) {
       super(weight);
@@ -321,26 +321,6 @@ public class FilteredQuery extends Query {
     @Override
     public long cost() {
       return Math.min(primary.cost(), secondary.cost());
-    }
-  }
-  
-  // TODO once we have way to figure out if we use RA or LeapFrog we can remove this scorer
-  private static final class PrimaryAdvancedLeapFrogScorer extends LeapFrogScorer {
-    private final int firstFilteredDoc;
-
-    protected PrimaryAdvancedLeapFrogScorer(Weight weight, int firstFilteredDoc, DocIdSetIterator filterIter, Scorer other) {
-      super(weight, filterIter, other, other);
-      this.firstFilteredDoc = firstFilteredDoc;
-      this.primaryDoc = firstFilteredDoc; // initialize to prevent and advance call to move it further
-    }
-
-    @Override
-    protected int primaryNext() throws IOException {
-      if (secondaryDoc != -1) {
-        return super.primaryNext();
-      } else {
-        return firstFilteredDoc;
-      }
     }
   }
   
@@ -421,7 +401,7 @@ public class FilteredQuery extends Query {
    * A {@link FilterStrategy} that conditionally uses a random access filter if
    * the given {@link DocIdSet} supports random access (returns a non-null value
    * from {@link DocIdSet#bits()}) and
-   * {@link RandomAccessFilterStrategy#useRandomAccess(Bits, int)} returns
+   * {@link RandomAccessFilterStrategy#useRandomAccess(Bits, long)} returns
    * <code>true</code>. Otherwise this strategy falls back to a "zig-zag join" (
    * {@link FilteredQuery#LEAP_FROG_FILTER_FIRST_STRATEGY}) strategy.
    * 
@@ -477,14 +457,14 @@ public class FilteredQuery extends Query {
      * Returns a filtered {@link Scorer} based on this strategy.
      * 
      * @param context
-     *          the {@link AtomicReaderContext} for which to return the {@link Scorer}.
+     *          the {@link org.apache.lucene.index.LeafReaderContext} for which to return the {@link Scorer}.
      * @param weight the {@link FilteredQuery} {@link Weight} to create the filtered scorer.
      * @param docIdSet the filter {@link DocIdSet} to apply
      * @return a filtered scorer
      * 
      * @throws IOException if an {@link IOException} occurs
      */
-    public abstract Scorer filteredScorer(AtomicReaderContext context,
+    public abstract Scorer filteredScorer(LeafReaderContext context,
         Weight weight, DocIdSet docIdSet) throws IOException;
 
     /**
@@ -494,12 +474,12 @@ public class FilteredQuery extends Query {
      * wraps that into a BulkScorer.
      *
      * @param context
-     *          the {@link AtomicReaderContext} for which to return the {@link Scorer}.
+     *          the {@link org.apache.lucene.index.LeafReaderContext} for which to return the {@link Scorer}.
      * @param weight the {@link FilteredQuery} {@link Weight} to create the filtered scorer.
      * @param docIdSet the filter {@link DocIdSet} to apply
      * @return a filtered top scorer
      */
-    public BulkScorer filteredBulkScorer(AtomicReaderContext context,
+    public BulkScorer filteredBulkScorer(LeafReaderContext context,
         Weight weight, boolean scoreDocsInOrder, DocIdSet docIdSet) throws IOException {
       Scorer scorer = filteredScorer(context, weight, docIdSet);
       if (scorer == null) {
@@ -515,38 +495,31 @@ public class FilteredQuery extends Query {
    * A {@link FilterStrategy} that conditionally uses a random access filter if
    * the given {@link DocIdSet} supports random access (returns a non-null value
    * from {@link DocIdSet#bits()}) and
-   * {@link RandomAccessFilterStrategy#useRandomAccess(Bits, int)} returns
+   * {@link RandomAccessFilterStrategy#useRandomAccess(Bits, long)} returns
    * <code>true</code>. Otherwise this strategy falls back to a "zig-zag join" (
    * {@link FilteredQuery#LEAP_FROG_FILTER_FIRST_STRATEGY}) strategy .
    */
   public static class RandomAccessFilterStrategy extends FilterStrategy {
 
     @Override
-    public Scorer filteredScorer(AtomicReaderContext context, Weight weight, DocIdSet docIdSet) throws IOException {
+    public Scorer filteredScorer(LeafReaderContext context, Weight weight, DocIdSet docIdSet) throws IOException {
       final DocIdSetIterator filterIter = docIdSet.iterator();
       if (filterIter == null) {
         // this means the filter does not accept any documents.
         return null;
       }  
-
-      final int firstFilterDoc = filterIter.nextDoc();
-      if (firstFilterDoc == DocIdSetIterator.NO_MORE_DOCS) {
-        return null;
-      }
       
       final Bits filterAcceptDocs = docIdSet.bits();
       // force if RA is requested
-      final boolean useRandomAccess = filterAcceptDocs != null && useRandomAccess(filterAcceptDocs, firstFilterDoc);
+      final boolean useRandomAccess = filterAcceptDocs != null && useRandomAccess(filterAcceptDocs, filterIter.cost());
       if (useRandomAccess) {
         // if we are using random access, we return the inner scorer, just with other acceptDocs
         return weight.scorer(context, filterAcceptDocs);
       } else {
-        assert firstFilterDoc > -1;
         // we are gonna advance() this scorer, so we set inorder=true/toplevel=false
         // we pass null as acceptDocs, as our filter has already respected acceptDocs, no need to do twice
         final Scorer scorer = weight.scorer(context, null);
-        // TODO once we have way to figure out if we use RA or LeapFrog we can remove this scorer
-        return (scorer == null) ? null : new PrimaryAdvancedLeapFrogScorer(weight, firstFilterDoc, filterIter, scorer);
+        return (scorer == null) ? null : new LeapFrogScorer(weight, filterIter, scorer, scorer);
       }
     }
     
@@ -557,14 +530,14 @@ public class FilteredQuery extends Query {
      * However, when the filter is very sparse, it can be faster to execute the query+filter
      * as a conjunction in some cases.
      * 
-     * The default implementation returns <code>true</code> if the first document accepted by the
-     * filter is < 100.
+     * The default implementation returns <code>true</code> if the filter matches more than 1%
+     * of documents
      * 
      * @lucene.internal
      */
-    protected boolean useRandomAccess(Bits bits, int firstFilterDoc) {
-      //TODO once we have a cost API on filters and scorers we should rethink this heuristic
-      return firstFilterDoc < 100;
+    protected boolean useRandomAccess(Bits bits, long filterCost) {
+      // if the filter matches more than 1% of documents, we use random-access
+      return filterCost * 100 > bits.length();
     }
   }
   
@@ -577,7 +550,7 @@ public class FilteredQuery extends Query {
     }
 
     @Override
-    public Scorer filteredScorer(AtomicReaderContext context,
+    public Scorer filteredScorer(LeafReaderContext context,
         Weight weight, DocIdSet docIdSet) throws IOException {
       final DocIdSetIterator filterIter = docIdSet.iterator();
       if (filterIter == null) {
@@ -613,7 +586,7 @@ public class FilteredQuery extends Query {
    */
   private static final class QueryFirstFilterStrategy extends FilterStrategy {
     @Override
-    public Scorer filteredScorer(final AtomicReaderContext context,
+    public Scorer filteredScorer(final LeafReaderContext context,
         Weight weight,
         DocIdSet docIdSet) throws IOException {
       Bits filterAcceptDocs = docIdSet.bits();
@@ -628,7 +601,7 @@ public class FilteredQuery extends Query {
     }
 
     @Override
-    public BulkScorer filteredBulkScorer(final AtomicReaderContext context,
+    public BulkScorer filteredBulkScorer(final LeafReaderContext context,
         Weight weight,
         boolean scoreDocsInOrder, // ignored (we always top-score in order)
         DocIdSet docIdSet) throws IOException {

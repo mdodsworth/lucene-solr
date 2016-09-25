@@ -24,6 +24,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FilenameFilter;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -196,7 +197,7 @@ public class UpdateLog implements PluginInfoInitialized {
 
   public long getTotalLogsSize() {
     long size = 0;
-    synchronized (logs) {
+    synchronized (this) {
       for (TransactionLog log : logs) {
         size += log.getLogSize();
       }
@@ -205,7 +206,9 @@ public class UpdateLog implements PluginInfoInitialized {
   }
 
   public long getTotalLogsNumber() {
-    return logs.size();
+    synchronized (this) {
+      return logs.size();
+    }
   }
 
   public VersionInfo getVersionInfo() {
@@ -316,7 +319,7 @@ public class UpdateLog implements PluginInfoInitialized {
   /* Takes over ownership of the log, keeping it until no longer needed
      and then decrementing it's reference and dropping it.
    */
-  protected void addOldLog(TransactionLog oldLog, boolean removeOld) {
+  protected synchronized void addOldLog(TransactionLog oldLog, boolean removeOld) {
     if (oldLog == null) return;
 
     numOldRecords += oldLog.numRecords();
@@ -1444,10 +1447,8 @@ public class UpdateLog implements PluginInfoInitialized {
   public static void deleteFile(File file) {
     boolean success = false;
     try {
-      success = file.delete();
-      if (!success) {
-        log.error("Error deleting file: " + file);
-      }
+      Files.deleteIfExists(file.toPath());
+      success = true;
     } catch (Exception e) {
       log.error("Error deleting file: " + file, e);
     }
@@ -1489,9 +1490,11 @@ public class UpdateLog implements PluginInfoInitialized {
       String[] files = getLogList(tlogDir);
       for (String file : files) {
         File f = new File(tlogDir, file);
-        boolean s = f.delete();
-        if (!s) {
-          log.error("Could not remove tlog file:" + f);
+        try {
+          Files.delete(f.toPath());
+        } catch (IOException cause) {
+          // NOTE: still throws SecurityException as before.
+          log.error("Could not remove tlog file:" + f, cause);
         }
       }
     }

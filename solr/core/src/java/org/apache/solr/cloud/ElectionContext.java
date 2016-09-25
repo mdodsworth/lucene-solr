@@ -152,7 +152,7 @@ class ShardLeaderElectionContextBase extends ElectionContext {
     
     assert shardId != null;
     ZkNodeProps m = ZkNodeProps.fromKeyVals(Overseer.QUEUE_OPERATION,
-        ZkStateReader.LEADER_PROP, ZkStateReader.SHARD_ID_PROP, shardId,
+        Overseer.OverseerAction.LEADER.toLower(), ZkStateReader.SHARD_ID_PROP, shardId,
         ZkStateReader.COLLECTION_PROP, collection, ZkStateReader.BASE_URL_PROP,
         leaderProps.getProperties().get(ZkStateReader.BASE_URL_PROP),
         ZkStateReader.CORE_NAME_PROP,
@@ -205,14 +205,14 @@ final class ShardLeaderElectionContext extends ShardLeaderElectionContextBase {
     String coreName = leaderProps.getStr(ZkStateReader.CORE_NAME_PROP);
     
     // clear the leader in clusterstate
-    ZkNodeProps m = new ZkNodeProps(Overseer.QUEUE_OPERATION, ZkStateReader.LEADER_PROP,
+    ZkNodeProps m = new ZkNodeProps(Overseer.QUEUE_OPERATION, Overseer.OverseerAction.LEADER.toLower(),
         ZkStateReader.SHARD_ID_PROP, shardId, ZkStateReader.COLLECTION_PROP,
         collection);
     Overseer.getInQueue(zkClient).offer(ZkStateReader.toJSON(m));
     
     int leaderVoteWait = cc.getZkController().getLeaderVoteWait();
     if (!weAreReplacement) {
-      waitForReplicasToComeUp(weAreReplacement, leaderVoteWait);
+      waitForReplicasToComeUp(leaderVoteWait);
     }
 
     try (SolrCore core = cc.getCore(coreName)) {
@@ -226,7 +226,7 @@ final class ShardLeaderElectionContext extends ShardLeaderElectionContextBase {
       
       // should I be leader?
       if (weAreReplacement && !shouldIBeLeader(leaderProps, core, weAreReplacement)) {
-        rejoinLeaderElection(leaderSeqPath, core);
+        rejoinLeaderElection(core);
         return;
       }
       
@@ -297,7 +297,7 @@ final class ShardLeaderElectionContext extends ShardLeaderElectionContextBase {
         }
       }
       if (!success) {
-        rejoinLeaderElection(leaderSeqPath, core);
+        rejoinLeaderElection(core);
         return;
       }
 
@@ -323,7 +323,7 @@ final class ShardLeaderElectionContext extends ShardLeaderElectionContextBase {
         core.getCoreDescriptor().getCloudDescriptor().setLeader(false);
         
         // we could not publish ourselves as leader - try and rejoin election
-        rejoinLeaderElection(leaderSeqPath, core);
+        rejoinLeaderElection(core);
       }
     }
 
@@ -387,7 +387,8 @@ final class ShardLeaderElectionContext extends ShardLeaderElectionContextBase {
                                                     collection,
                                                     shardId,
                                                     coreNodeProps,
-                                                    120);
+                                                    120,
+                                                    coreNodeName);
               zkController.ensureReplicaInLeaderInitiatedRecovery(
                   collection, shardId, coreNodeProps.getCoreUrl(), coreNodeProps, false);
               
@@ -400,7 +401,7 @@ final class ShardLeaderElectionContext extends ShardLeaderElectionContextBase {
     } // core gets closed automagically    
   }
 
-  private void waitForReplicasToComeUp(boolean weAreReplacement, int timeoutms) throws InterruptedException {
+  private void waitForReplicasToComeUp(int timeoutms) throws InterruptedException {
     long timeoutAt = System.nanoTime() + TimeUnit.NANOSECONDS.convert(timeoutms, TimeUnit.MILLISECONDS);
     final String shardsElectZkPath = electionPath + LeaderElector.ELECTION_NODE;
     
@@ -423,9 +424,11 @@ final class ShardLeaderElectionContext extends ShardLeaderElectionContextBase {
           return;
         } else {
           if (cnt % 40 == 0) {
-            log.info("Waiting until we see more replicas up for shard " + shardId + ": total="
-              + slices.getReplicasMap().size() + " found=" + found
-              + " timeoutin=" + (timeoutAt - System.nanoTime() / (float)(10^9)) + "ms");
+            log.info("Waiting until we see more replicas up for shard {}: total={}"
+              + " found={}"
+              + " timeoutin={}ms",
+                shardId, slices.getReplicasMap().size(), found,
+                TimeUnit.MILLISECONDS.convert(timeoutAt - System.nanoTime(), TimeUnit.NANOSECONDS));
           }
         }
         
@@ -442,16 +445,15 @@ final class ShardLeaderElectionContext extends ShardLeaderElectionContextBase {
       
       Thread.sleep(500);
       slices = zkController.getClusterState().getSlice(collection, shardId);
-      // System.out.println("###### waitForReplicasToComeUp  : slices=" + slices + " all=" + zkController.getClusterState().getCollectionStates() );
       cnt++;
     }
   }
 
-  private void rejoinLeaderElection(String leaderSeqPath, SolrCore core)
+  private void rejoinLeaderElection(SolrCore core)
       throws InterruptedException, KeeperException, IOException {
     // remove our ephemeral and re join the election
     if (cc.isShutDown()) {
-      log.info("Not rejoining election because CoreContainer is close");
+      log.info("Not rejoining election because CoreContainer is closed");
       return;
     }
     

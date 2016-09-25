@@ -29,12 +29,12 @@ import java.util.TreeSet;
 
 import org.apache.lucene.analysis.CachingTokenFilter;
 import org.apache.lucene.analysis.TokenStream;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.FilterLeafReader;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.Fields;
-import org.apache.lucene.index.FilterAtomicReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedDocValues;
@@ -44,6 +44,8 @@ import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.memory.MemoryIndex;
 import org.apache.lucene.queries.CommonTermsQuery;
 import org.apache.lucene.search.*;
+import org.apache.lucene.search.join.ToChildBlockJoinQuery;
+import org.apache.lucene.search.join.ToParentBlockJoinQuery;
 import org.apache.lucene.search.spans.FieldMaskingSpanQuery;
 import org.apache.lucene.search.spans.SpanFirstQuery;
 import org.apache.lucene.search.spans.SpanNearQuery;
@@ -69,7 +71,7 @@ public class WeightedSpanTermExtractor {
   private boolean cachedTokenStream;
   private boolean wrapToCaching = true;
   private int maxDocCharsToAnalyze;
-  private AtomicReader internalReader = null;
+  private LeafReader internalReader = null;
 
 
   public WeightedSpanTermExtractor() {
@@ -154,6 +156,10 @@ public class WeightedSpanTermExtractor {
       for (Iterator<Query> iterator = ((DisjunctionMaxQuery) query).iterator(); iterator.hasNext();) {
         extract(iterator.next(), terms);
       }
+    } else if (query instanceof ToParentBlockJoinQuery) {
+      extract(((ToParentBlockJoinQuery) query).getChildQuery(), terms);
+    } else if (query instanceof ToChildBlockJoinQuery) {
+      extract(((ToChildBlockJoinQuery) query).getParentQuery(), terms);
     } else if (query instanceof MultiPhraseQuery) {
       final MultiPhraseQuery mpq = (MultiPhraseQuery) query;
       final List<Term[]> termArrays = mpq.getTermArrays();
@@ -277,7 +283,7 @@ public class WeightedSpanTermExtractor {
       } else {
         q = spanQuery;
       }
-      AtomicReaderContext context = getLeafContext();
+      LeafReaderContext context = getLeafContext();
       Map<Term,TermContext> termContexts = new HashMap<>();
       TreeSet<Term> extractedTerms = new TreeSet<>();
       q.extractTerms(extractedTerms);
@@ -349,7 +355,7 @@ public class WeightedSpanTermExtractor {
     return rv;
   }
 
-  protected AtomicReaderContext getLeafContext() throws IOException {
+  protected LeafReaderContext getLeafContext() throws IOException {
     if (internalReader == null) {
       if(wrapToCaching && !(tokenStream instanceof CachingTokenFilter)) {
         assert !cachedTokenStream;
@@ -357,24 +363,24 @@ public class WeightedSpanTermExtractor {
         cachedTokenStream = true;
       }
       final MemoryIndex indexer = new MemoryIndex(true);
-      indexer.addField(DelegatingAtomicReader.FIELD_NAME, tokenStream);
+      indexer.addField(DelegatingLeafReader.FIELD_NAME, tokenStream);
       tokenStream.reset();
       final IndexSearcher searcher = indexer.createSearcher();
       // MEM index has only atomic ctx
-      internalReader = new DelegatingAtomicReader(((AtomicReaderContext)searcher.getTopReaderContext()).reader());
+      internalReader = new DelegatingLeafReader(((LeafReaderContext)searcher.getTopReaderContext()).reader());
     }
     return internalReader.getContext();
   }
   
   /*
    * This reader will just delegate every call to a single field in the wrapped
-   * AtomicReader. This way we only need to build this field once rather than
+   * LeafReader. This way we only need to build this field once rather than
    * N-Times
    */
-  static final class DelegatingAtomicReader extends FilterAtomicReader {
+  static final class DelegatingLeafReader extends FilterLeafReader {
     private static final String FIELD_NAME = "shadowed_field";
 
-    DelegatingAtomicReader(AtomicReader in) {
+    DelegatingLeafReader(LeafReader in) {
       super(in);
     }
     
@@ -388,12 +394,12 @@ public class WeightedSpanTermExtractor {
       return new FilterFields(super.fields()) {
         @Override
         public Terms terms(String field) throws IOException {
-          return super.terms(DelegatingAtomicReader.FIELD_NAME);
+          return super.terms(DelegatingLeafReader.FIELD_NAME);
         }
 
         @Override
         public Iterator<String> iterator() {
-          return Collections.singletonList(DelegatingAtomicReader.FIELD_NAME).iterator();
+          return Collections.singletonList(DelegatingLeafReader.FIELD_NAME).iterator();
         }
 
         @Override

@@ -22,10 +22,10 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
+import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
@@ -83,6 +83,12 @@ public class TestIndexFileDeleter extends LuceneTestCase {
     Term searchTerm = new Term("id", "7");
     writer.deleteDocuments(searchTerm);
     writer.close();
+    
+    // read in index to try to not depend on codec-specific filenames so much
+    SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
+    SegmentInfo si0 = sis.info(0).info;
+    SegmentInfo si1 = sis.info(1).info;
+    SegmentInfo si3 = sis.info(3).info;
 
     // Now, artificially create an extra .del file & extra
     // .s0 file:
@@ -95,7 +101,7 @@ public class TestIndexFileDeleter extends LuceneTestCase {
     */
 
     // TODO: fix this test better
-    String ext = Codec.getDefault().getName().equals("SimpleText") ? ".liv" : ".del";
+    String ext = ".liv";
     
     // Create a bogus separate del file for a
     // segment that already has a separate del file: 
@@ -109,27 +115,30 @@ public class TestIndexFileDeleter extends LuceneTestCase {
     // non-existent segment:
     copyFile(dir, "_0_1" + ext, "_188_1" + ext);
 
+    String cfsFiles0[] = si0.getCodec().compoundFormat().files(si0);
+    
     // Create a bogus segment file:
-    copyFile(dir, "_0.cfs", "_188.cfs");
+    copyFile(dir, cfsFiles0[0], "_188.cfs");
 
     // Create a bogus fnm file when the CFS already exists:
-    copyFile(dir, "_0.cfs", "_0.fnm");
-    
-    // Create some old segments file:
-    copyFile(dir, "segments_2", "segments");
-    copyFile(dir, "segments_2", "segments_1");
+    copyFile(dir, cfsFiles0[0], "_0.fnm");
 
     // Create a bogus cfs file shadowing a non-cfs segment:
     
     // TODO: assert is bogus (relies upon codec-specific filenames)
     assertTrue(slowFileExists(dir, "_3.fdt") || slowFileExists(dir, "_3.fld"));
-    assertTrue(!slowFileExists(dir, "_3.cfs"));
-    copyFile(dir, "_1.cfs", "_3.cfs");
+    
+    String cfsFiles3[] = si3.getCodec().compoundFormat().files(si3);
+    for (String f : cfsFiles3) {
+      assertTrue(!slowFileExists(dir, f));
+    }
+    
+    String cfsFiles1[] = si1.getCodec().compoundFormat().files(si1);
+    copyFile(dir, cfsFiles1[0], "_3.cfs");
     
     String[] filesPre = dir.listAll();
 
-    // Open & close a writer: it should delete the above 4
-    // files and nothing more:
+    // Open & close a writer: it should delete the above files and nothing more:
     writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
                                     .setOpenMode(OpenMode.APPEND));
     writer.close();
@@ -250,8 +259,7 @@ public class TestIndexFileDeleter extends LuceneTestCase {
     // empty commit
     new IndexWriter(dir, new IndexWriterConfig(null)).close();   
     
-    SegmentInfos sis = new SegmentInfos();
-    sis.read(dir);
+    SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
     assertEquals(1, sis.getGeneration());
     
     // no inflation
@@ -268,8 +276,7 @@ public class TestIndexFileDeleter extends LuceneTestCase {
     // empty commit
     new IndexWriter(dir, new IndexWriterConfig(null)).close();   
     
-    SegmentInfos sis = new SegmentInfos();
-    sis.read(dir);
+    SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
     assertEquals(1, sis.getGeneration());
     
     // add trash commit
@@ -293,8 +300,7 @@ public class TestIndexFileDeleter extends LuceneTestCase {
     // empty commit
     new IndexWriter(dir, new IndexWriterConfig(null)).close();   
     
-    SegmentInfos sis = new SegmentInfos();
-    sis.read(dir);
+    SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
     assertEquals(0, sis.counter);
     
     // no inflation
@@ -318,8 +324,7 @@ public class TestIndexFileDeleter extends LuceneTestCase {
     iw.addDocument(new Document());
     iw.commit();
     iw.close();
-    sis = new SegmentInfos();
-    sis.read(dir);
+    sis = SegmentInfos.readLatestCommit(dir);
     assertEquals("_4", sis.info(0).info.name);
     assertEquals(5, sis.counter);
     
@@ -336,8 +341,7 @@ public class TestIndexFileDeleter extends LuceneTestCase {
     iw.close();   
     
     // no deletes: start at 1
-    SegmentInfos sis = new SegmentInfos();
-    sis.read(dir);
+    SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
     assertEquals(1, sis.info(0).getNextDelGen());
     
     // no inflation
@@ -361,8 +365,7 @@ public class TestIndexFileDeleter extends LuceneTestCase {
     // empty commit
     new IndexWriter(dir, new IndexWriterConfig(null)).close();   
     
-    SegmentInfos sis = new SegmentInfos();
-    sis.read(dir);
+    SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
     assertEquals(1, sis.getGeneration());
     
     // add trash file
@@ -385,8 +388,7 @@ public class TestIndexFileDeleter extends LuceneTestCase {
     iw.close();   
     
     // no deletes: start at 1
-    SegmentInfos sis = new SegmentInfos();
-    sis.read(dir);
+    SegmentInfos sis = SegmentInfos.readLatestCommit(dir);
     assertEquals(1, sis.info(0).getNextDelGen());
     
     // add trash file
@@ -396,6 +398,102 @@ public class TestIndexFileDeleter extends LuceneTestCase {
     IndexFileDeleter.inflateGens(sis, Arrays.asList(dir.listAll()), InfoStream.getDefault());
     assertEquals(1, sis.info(0).getNextDelGen());
 
+    dir.close();
+  }
+
+  // LUCENE-5919
+  public void testExcInDecRef() throws Exception {
+    MockDirectoryWrapper dir = newMockDirectory();
+
+    // disable slow things: we don't rely upon sleeps here.
+    dir.setThrottling(MockDirectoryWrapper.Throttling.NEVER);
+    dir.setUseSlowOpenClosers(false);
+
+    final AtomicBoolean doFailExc = new AtomicBoolean();
+
+    dir.failOn(new MockDirectoryWrapper.Failure() {
+        @Override
+        public void eval(MockDirectoryWrapper dir) throws IOException {
+          if (doFailExc.get() && random().nextInt(4) == 1) {
+            Exception e = new Exception();
+            StackTraceElement stack[] = e.getStackTrace();
+            for (int i = 0; i < stack.length; i++) {
+              if (stack[i].getClassName().equals(IndexFileDeleter.class.getName()) && stack[i].getMethodName().equals("decRef")) {
+                throw new RuntimeException("fake fail");
+              }
+            }
+          }
+        }
+      });
+
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()));
+    //iwc.setMergeScheduler(new SerialMergeScheduler());
+    MergeScheduler ms = iwc.getMergeScheduler();
+    if (ms instanceof ConcurrentMergeScheduler) {
+      final ConcurrentMergeScheduler suppressFakeFail = new ConcurrentMergeScheduler() {
+          @Override
+          protected void handleMergeException(Throwable exc) {
+            // suppress only FakeIOException:
+            if (exc instanceof RuntimeException && exc.getMessage().equals("fake fail")) {
+              // ok to ignore
+            } else if ((exc instanceof AlreadyClosedException || exc instanceof IllegalStateException) 
+                        && exc.getCause() != null && "fake fail".equals(exc.getCause().getMessage())) {
+              // also ok to ignore
+            } else {
+              super.handleMergeException(exc);
+            }
+          }
+        };
+      final ConcurrentMergeScheduler cms = (ConcurrentMergeScheduler) ms;
+      suppressFakeFail.setMaxMergesAndThreads(cms.getMaxMergeCount(), cms.getMaxThreadCount());
+      suppressFakeFail.setMergeThreadPriority(cms.getMergeThreadPriority());
+      iwc.setMergeScheduler(suppressFakeFail);
+    }
+
+    RandomIndexWriter w = new RandomIndexWriter(random(), dir, iwc);
+
+    // Since we hit exc during merging, a partial
+    // forceMerge can easily return when there are still
+    // too many segments in the index:
+    w.setDoRandomForceMergeAssert(false);
+
+    doFailExc.set(true);
+    int ITERS = atLeast(1000);
+    for(int iter=0;iter<ITERS;iter++) {
+      try {
+        if (random().nextInt(10) == 5) {
+          w.commit();
+        } else if (random().nextInt(10) == 7) {
+          w.getReader().close();
+        } else {
+          Document doc = new Document();
+          doc.add(newTextField("field", "some text", Field.Store.NO));
+          w.addDocument(doc);
+        }
+      } catch (IOException ioe) {
+        if (ioe.getMessage().contains("background merge hit exception")) {
+          Throwable cause = ioe.getCause();
+          if (cause != null && cause instanceof RuntimeException && ((RuntimeException) cause).getMessage().equals("fake fail")) {
+            // ok
+          } else {
+            throw ioe;
+          }
+        } else {
+          throw ioe;
+        }
+      } catch (RuntimeException re) {
+        if (re.getMessage().equals("fake fail")) {
+          // ok
+        } else if (re instanceof AlreadyClosedException && re.getCause() != null && "fake fail".equals(re.getCause().getMessage())) {
+          break; // our test got unlucky, triggered our strange exception after successful finishCommit, caused a disaster!
+        } else {
+          throw re;
+        }
+      }
+    }
+
+    doFailExc.set(false);
+    w.close();
     dir.close();
   }
 }

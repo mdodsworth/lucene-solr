@@ -19,25 +19,43 @@ package org.apache.lucene.codecs.asserting;
 
 import org.apache.lucene.codecs.DocValuesFormat;
 import org.apache.lucene.codecs.FilterCodec;
+import org.apache.lucene.codecs.LiveDocsFormat;
 import org.apache.lucene.codecs.NormsFormat;
 import org.apache.lucene.codecs.PostingsFormat;
 import org.apache.lucene.codecs.StoredFieldsFormat;
 import org.apache.lucene.codecs.TermVectorsFormat;
-import org.apache.lucene.codecs.lucene410.Lucene410Codec;
+import org.apache.lucene.codecs.perfield.PerFieldDocValuesFormat;
+import org.apache.lucene.codecs.perfield.PerFieldPostingsFormat;
+import org.apache.lucene.util.TestUtil;
 
 /**
- * Acts like {@link Lucene410Codec} but with additional asserts.
+ * Acts like the default codec but with additional asserts.
  */
-public final class AssertingCodec extends FilterCodec {
+public class AssertingCodec extends FilterCodec {
 
-  private final PostingsFormat postings = new AssertingPostingsFormat();
+  private final PostingsFormat postings = new PerFieldPostingsFormat() {
+    @Override
+    public PostingsFormat getPostingsFormatForField(String field) {
+      return AssertingCodec.this.getPostingsFormatForField(field);
+    }
+  };
+  
+  private final DocValuesFormat docValues = new PerFieldDocValuesFormat() {
+    @Override
+    public DocValuesFormat getDocValuesFormatForField(String field) {
+      return AssertingCodec.this.getDocValuesFormatForField(field);
+    }
+  };
+  
   private final TermVectorsFormat vectors = new AssertingTermVectorsFormat();
   private final StoredFieldsFormat storedFields = new AssertingStoredFieldsFormat();
-  private final DocValuesFormat docValues = new AssertingDocValuesFormat();
   private final NormsFormat norms = new AssertingNormsFormat();
+  private final LiveDocsFormat liveDocs = new AssertingLiveDocsFormat();
+  private final PostingsFormat defaultFormat = new AssertingPostingsFormat();
+  private final DocValuesFormat defaultDVFormat = new AssertingDocValuesFormat();
 
   public AssertingCodec() {
-    super("Asserting", new Lucene410Codec());
+    super("Asserting", TestUtil.getDefaultCodec());
   }
 
   @Override
@@ -66,7 +84,30 @@ public final class AssertingCodec extends FilterCodec {
   }
 
   @Override
+  public LiveDocsFormat liveDocsFormat() {
+    return liveDocs;
+  }
+
+  @Override
   public String toString() {
     return "Asserting(" + delegate + ")";
+  }
+  
+  /** Returns the postings format that should be used for writing 
+   *  new segments of <code>field</code>.
+   *  
+   *  The default implementation always returns "Asserting"
+   */
+  public PostingsFormat getPostingsFormatForField(String field) {
+    return defaultFormat;
+  }
+  
+  /** Returns the docvalues format that should be used for writing 
+   *  new segments of <code>field</code>.
+   *  
+   *  The default implementation always returns "Asserting"
+   */
+  public DocValuesFormat getDocValuesFormatForField(String field) {
+    return defaultDVFormat;
   }
 }

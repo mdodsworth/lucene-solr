@@ -26,7 +26,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field.Store;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.StringField;
-import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.NumericDocValues;
@@ -41,6 +41,7 @@ import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.util.ArrayUtil;
+import org.apache.lucene.util.BitDocIdSet;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.LuceneTestCase;
 
@@ -53,11 +54,11 @@ public class TestBlockJoinSorter extends LuceneTestCase {
     }
 
     @Override
-    protected DocIdSet cacheImpl(DocIdSetIterator iterator, AtomicReader reader)
+    protected DocIdSet cacheImpl(DocIdSetIterator iterator, LeafReader reader)
         throws IOException {
       final FixedBitSet cached = new FixedBitSet(reader.maxDoc());
       cached.or(iterator);
-      return cached;
+      return new BitDocIdSet(cached);
     }
 
   }
@@ -88,9 +89,9 @@ public class TestBlockJoinSorter extends LuceneTestCase {
     final DirectoryReader indexReader = writer.getReader();
     writer.close();
 
-    final AtomicReader reader = getOnlySegmentReader(indexReader);
+    final LeafReader reader = getOnlySegmentReader(indexReader);
     final Filter parentsFilter = new FixedBitSetCachingWrapperFilter(new QueryWrapperFilter(new TermQuery(new Term("parent", "true"))));
-    final FixedBitSet parentBits = (FixedBitSet) parentsFilter.getDocIdSet(reader.getContext(), null);
+    final FixedBitSet parentBits = (FixedBitSet) parentsFilter.getDocIdSet(reader.getContext(), null).bits();
     final NumericDocValues parentValues = reader.getNumericDocValues("parent_val");
     final NumericDocValues childValues = reader.getNumericDocValues("child_val");
 

@@ -17,32 +17,33 @@ package org.apache.lucene.queries;
  * limitations under the License.
  */
 
+import java.io.IOException;
+
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.MockTokenizer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.SlowCompositeReaderWrapper;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.BooleanClause.Occur;
+import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Filter;
-import org.apache.lucene.search.TermRangeFilter;
-import org.apache.lucene.search.DocIdSet;
-import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.QueryWrapperFilter;
+import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.search.TermRangeFilter;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.BitDocIdSet;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.LuceneTestCase;
 
-import java.io.IOException;
-
 public class BooleanFilterTest extends LuceneTestCase {
   private Directory directory;
-  private AtomicReader reader;
+  private LeafReader reader;
 
   @Override
   public void setUp() throws Exception {
@@ -92,8 +93,8 @@ public class BooleanFilterTest extends LuceneTestCase {
   private Filter getEmptyFilter() {
     return new Filter() {
       @Override
-      public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) {
-        return new FixedBitSet(context.reader().maxDoc());
+      public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) {
+        return new BitDocIdSet(new FixedBitSet(context.reader().maxDoc()));
       }
     };
   }
@@ -101,7 +102,7 @@ public class BooleanFilterTest extends LuceneTestCase {
   private Filter getNullDISFilter() {
     return new Filter() {
       @Override
-      public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) {
+      public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) {
         return null;
       }
     };
@@ -110,7 +111,7 @@ public class BooleanFilterTest extends LuceneTestCase {
   private Filter getNullDISIFilter() {
     return new Filter() {
       @Override
-      public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) {
+      public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) {
         return DocIdSet.EMPTY;
       }
     };

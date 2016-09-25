@@ -22,12 +22,13 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.TreeMap;
 
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.IndexFileNames;
@@ -42,6 +43,7 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.automaton.ByteRunAutomaton;
 import org.apache.lucene.util.automaton.CompiledAutomaton;
 import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefBuilder;
@@ -70,7 +72,6 @@ public class FSTTermsReader extends FieldsProducer {
   final TreeMap<String, TermsReader> fields = new TreeMap<>();
   final PostingsReaderBase postingsReader;
   //static boolean TEST = false;
-  final int version;
 
   public FSTTermsReader(SegmentReadState state, PostingsReaderBase postingsReader) throws IOException {
     final String termsFileName = IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, FSTTermsWriter.TERMS_EXTENSION);
@@ -80,11 +81,12 @@ public class FSTTermsReader extends FieldsProducer {
 
     boolean success = false;
     try {
-      version = readHeader(in);
-      if (version >= FSTTermsWriter.TERMS_VERSION_CHECKSUM) {
-        CodecUtil.checksumEntireFile(in);
-      }
-      this.postingsReader.init(in);
+      CodecUtil.checkIndexHeader(in, FSTTermsWriter.TERMS_CODEC_NAME,
+                                       FSTTermsWriter.TERMS_VERSION_START,
+                                       FSTTermsWriter.TERMS_VERSION_CURRENT,
+                                       state.segmentInfo.getId(), state.segmentSuffix);
+      CodecUtil.checksumEntireFile(in);
+      this.postingsReader.init(in, state);
       seekDir(in);
 
       final FieldInfos fieldInfos = state.fieldInfos;
@@ -93,7 +95,7 @@ public class FSTTermsReader extends FieldsProducer {
         int fieldNumber = in.readVInt();
         FieldInfo fieldInfo = fieldInfos.fieldInfo(fieldNumber);
         long numTerms = in.readVLong();
-        long sumTotalTermFreq = fieldInfo.getIndexOptions() == IndexOptions.DOCS_ONLY ? -1 : in.readVLong();
+        long sumTotalTermFreq = fieldInfo.getIndexOptions() == IndexOptions.DOCS ? -1 : in.readVLong();
         long sumDocFreq = in.readVLong();
         int docCount = in.readVInt();
         int longsSize = in.readVInt();
@@ -111,34 +113,25 @@ public class FSTTermsReader extends FieldsProducer {
     }
   }
 
-  private int readHeader(IndexInput in) throws IOException {
-    return CodecUtil.checkHeader(in, FSTTermsWriter.TERMS_CODEC_NAME,
-                                     FSTTermsWriter.TERMS_VERSION_START,
-                                     FSTTermsWriter.TERMS_VERSION_CURRENT);
-  }
   private void seekDir(IndexInput in) throws IOException {
-    if (version >= FSTTermsWriter.TERMS_VERSION_CHECKSUM) {
-      in.seek(in.length() - CodecUtil.footerLength() - 8);
-    } else {
-      in.seek(in.length() - 8);
-    }
+    in.seek(in.length() - CodecUtil.footerLength() - 8);
     in.seek(in.readLong());
   }
   private void checkFieldSummary(SegmentInfo info, IndexInput in, TermsReader field, TermsReader previous) throws IOException {
     // #docs with field must be <= #docs
     if (field.docCount < 0 || field.docCount > info.getDocCount()) {
-      throw new CorruptIndexException("invalid docCount: " + field.docCount + " maxDoc: " + info.getDocCount() + " (resource=" + in + ")");
+      throw new CorruptIndexException("invalid docCount: " + field.docCount + " maxDoc: " + info.getDocCount(), in);
     }
     // #postings must be >= #docs with field
     if (field.sumDocFreq < field.docCount) {
-      throw new CorruptIndexException("invalid sumDocFreq: " + field.sumDocFreq + " docCount: " + field.docCount + " (resource=" + in + ")");
+      throw new CorruptIndexException("invalid sumDocFreq: " + field.sumDocFreq + " docCount: " + field.docCount, in);
     }
     // #positions must be >= #postings
     if (field.sumTotalTermFreq != -1 && field.sumTotalTermFreq < field.sumDocFreq) {
-      throw new CorruptIndexException("invalid sumTotalTermFreq: " + field.sumTotalTermFreq + " sumDocFreq: " + field.sumDocFreq + " (resource=" + in + ")");
+      throw new CorruptIndexException("invalid sumTotalTermFreq: " + field.sumTotalTermFreq + " sumDocFreq: " + field.sumDocFreq, in);
     }
     if (previous != null) {
-      throw new CorruptIndexException("duplicate fields: " + field.fieldInfo.name + " (resource=" + in + ")");
+      throw new CorruptIndexException("duplicate fields: " + field.fieldInfo.name, in);
     }
   }
 
@@ -190,7 +183,25 @@ public class FSTTermsReader extends FieldsProducer {
 
     @Override
     public long ramBytesUsed() {
-      return BASE_RAM_BYTES_USED + dict.ramBytesUsed();
+      long bytesUsed = BASE_RAM_BYTES_USED;
+      if (dict != null) {
+        bytesUsed += dict.ramBytesUsed();
+      }
+      return bytesUsed;
+    }
+
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      if (dict == null) {
+        return Collections.emptyList();
+      } else {
+        return Collections.singletonList(Accountables.namedAccountable("terms", dict));
+      }
+    }
+    
+    @Override
+    public String toString() {
+      return "FSTTerms(terms=" + numTerms + ",postings=" + sumDocFreq + ",positions=" + sumTotalTermFreq + ",docs=" + docCount + ")";
     }
 
     @Override
@@ -751,6 +762,19 @@ public class FSTTermsReader extends FieldsProducer {
     return ramBytesUsed;
   }
   
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    List<Accountable> resources = new ArrayList<>();
+    resources.addAll(Accountables.namedAccountables("field", fields));
+    resources.add(Accountables.namedAccountable("delegate", postingsReader));
+    return Collections.unmodifiableCollection(resources);
+  }
+
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(fields=" + fields.size() + ",delegate=" + postingsReader + ")";
+  }
+
   @Override
   public void checkIntegrity() throws IOException {
     postingsReader.checkIntegrity();

@@ -52,7 +52,7 @@ public class TestNonWritablePersistFile extends AbstractDataImportHandlerTestCas
 
   @BeforeClass
   public static void createTempSolrHomeAndCore() throws Exception {
-    tmpSolrHome = createTempDir().getAbsolutePath();
+    tmpSolrHome = createTempDir().toFile().getAbsolutePath();
     FileUtils.copyDirectory(getFile("dih/solr"), new File(tmpSolrHome).getAbsoluteFile());
     initCore("dataimport-solrconfig.xml", "dataimport-schema.xml", 
              new File(tmpSolrHome).getAbsolutePath());
@@ -92,7 +92,7 @@ public class TestNonWritablePersistFile extends AbstractDataImportHandlerTestCas
       runFullImport(dataConfig_delta);
       assertQ(req("id:1"), "//*[@numFound='0']");
     } finally {
-      f.delete();
+      f.setWritable(true);
     }
   }  
 }

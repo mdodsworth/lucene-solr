@@ -22,14 +22,14 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.Fields;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexReaderContext;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.MultiReader;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedDocValues;
@@ -39,9 +39,9 @@ import org.apache.lucene.index.StoredFieldVisitor;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Filter;
+import org.apache.lucene.util.BitSetIterator;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.FixedBitSet;
-import org.apache.lucene.util.FixedBitSet.FixedBitSetIterator;
 import org.apache.lucene.util.LuceneTestCase;
 
 /**
@@ -68,7 +68,7 @@ public class TestDocSet extends LuceneTestCase {
 
   public DocSet getHashDocSet(FixedBitSet bs) {
     int[] docs = new int[bs.cardinality()];
-    FixedBitSetIterator iter = new FixedBitSetIterator(bs);
+    BitSetIterator iter = new BitSetIterator(bs, 0);
     for (int i=0; i<docs.length; i++) {
       docs[i] = iter.nextDoc();
     }
@@ -77,7 +77,7 @@ public class TestDocSet extends LuceneTestCase {
 
   public DocSet getIntDocSet(FixedBitSet bs) {
     int[] docs = new int[bs.cardinality()];
-    FixedBitSetIterator iter = new FixedBitSetIterator(bs);
+    BitSetIterator iter = new BitSetIterator(bs, 0);
     for (int i=0; i<docs.length; i++) {
       docs[i] = iter.nextDoc();
     }
@@ -95,7 +95,7 @@ public class TestDocSet extends LuceneTestCase {
     int offset = 3;
     int end = offset + len;
 
-    FixedBitSetIterator iter = new FixedBitSetIterator(bs);
+    BitSetIterator iter = new BitSetIterator(bs, 0);
     // put in opposite order... DocLists are not ordered.
     for (int i=end-1; i>=offset; i--) {
       arr[i] = iter.nextDoc();
@@ -350,8 +350,8 @@ public class TestDocSet extends LuceneTestCase {
   }
   ***/
 
-  public AtomicReader dummyIndexReader(final int maxDoc) {
-    return new AtomicReader() {
+  public LeafReader dummyIndexReader(final int maxDoc) {
+    return new LeafReader() {
       @Override
       public int maxDoc() {
         return maxDoc;
@@ -508,10 +508,10 @@ public class TestDocSet extends LuceneTestCase {
 
     DocIdSet da;
     DocIdSet db;
-    List<AtomicReaderContext> leaves = topLevelContext.leaves();
+    List<LeafReaderContext> leaves = topLevelContext.leaves();
 
     // first test in-sequence sub readers
-    for (AtomicReaderContext readerContext : leaves) {
+    for (LeafReaderContext readerContext : leaves) {
       da = fa.getDocIdSet(readerContext, null);
       db = fb.getDocIdSet(readerContext, null);
       doTestIteratorEqual(da, db);
@@ -520,7 +520,7 @@ public class TestDocSet extends LuceneTestCase {
     int nReaders = leaves.size();
     // now test out-of-sequence sub readers
     for (int i=0; i<nReaders; i++) {
-      AtomicReaderContext readerContext = leaves.get(rand.nextInt(nReaders));
+      LeafReaderContext readerContext = leaves.get(rand.nextInt(nReaders));
       da = fa.getDocIdSet(readerContext, null);
       db = fb.getDocIdSet(readerContext, null);
       doTestIteratorEqual(da, db);

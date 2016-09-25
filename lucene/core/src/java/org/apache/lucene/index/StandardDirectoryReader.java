@@ -37,7 +37,7 @@ final class StandardDirectoryReader extends DirectoryReader {
   private final boolean applyAllDeletes;
   
   /** called only from static open() methods */
-  StandardDirectoryReader(Directory directory, AtomicReader[] readers, IndexWriter writer,
+  StandardDirectoryReader(Directory directory, LeafReader[] readers, IndexWriter writer,
     SegmentInfos sis, boolean applyAllDeletes) {
     super(directory, readers);
     this.writer = writer;
@@ -47,11 +47,10 @@ final class StandardDirectoryReader extends DirectoryReader {
 
   /** called from DirectoryReader.open(...) methods */
   static DirectoryReader open(final Directory directory, final IndexCommit commit) throws IOException {
-    return (DirectoryReader) new SegmentInfos.FindSegmentsFile(directory) {
+    return new SegmentInfos.FindSegmentsFile<DirectoryReader>(directory) {
       @Override
-      protected Object doBody(String segmentFileName) throws IOException {
-        SegmentInfos sis = new SegmentInfos();
-        sis.read(directory, segmentFileName);
+      protected DirectoryReader doBody(String segmentFileName) throws IOException {
+        SegmentInfos sis = SegmentInfos.readCommit(directory, segmentFileName);
         final SegmentReader[] readers = new SegmentReader[sis.size()];
         for (int i = sis.size()-1; i >= 0; i--) {
           boolean success = false;
@@ -128,7 +127,7 @@ final class StandardDirectoryReader extends DirectoryReader {
   }
 
   /** This constructor is only used for {@link #doOpenIfChanged(SegmentInfos)} */
-  private static DirectoryReader open(Directory directory, SegmentInfos infos, List<? extends AtomicReader> oldReaders) throws IOException {
+  private static DirectoryReader open(Directory directory, SegmentInfos infos, List<? extends LeafReader> oldReaders) throws IOException {
 
     // we put the old SegmentReaders in a map, that allows us
     // to lookup a reader using its segment name
@@ -234,7 +233,7 @@ final class StandardDirectoryReader extends DirectoryReader {
     if (writer != null) {
       buffer.append(":nrt");
     }
-    for (final AtomicReader r : getSequentialSubReaders()) {
+    for (final LeafReader r : getSequentialSubReaders()) {
       buffer.append(' ');
       buffer.append(r);
     }
@@ -309,11 +308,10 @@ final class StandardDirectoryReader extends DirectoryReader {
   }
 
   private DirectoryReader doOpenFromCommit(IndexCommit commit) throws IOException {
-    return (DirectoryReader) new SegmentInfos.FindSegmentsFile(directory) {
+    return new SegmentInfos.FindSegmentsFile<DirectoryReader>(directory) {
       @Override
-      protected Object doBody(String segmentFileName) throws IOException {
-        final SegmentInfos infos = new SegmentInfos();
-        infos.read(directory, segmentFileName);
+      protected DirectoryReader doBody(String segmentFileName) throws IOException {
+        final SegmentInfos infos = SegmentInfos.readCommit(directory, segmentFileName);
         return doOpenIfChanged(infos);
       }
     }.run(commit);
@@ -338,8 +336,7 @@ final class StandardDirectoryReader extends DirectoryReader {
       // IndexWriter.prepareCommit has been called (but not
       // yet commit), then the reader will still see itself as
       // current:
-      SegmentInfos sis = new SegmentInfos();
-      sis.read(directory);
+      SegmentInfos sis = SegmentInfos.readLatestCommit(directory);
 
       // we loaded SegmentInfos from the directory
       return sis.getVersion() == segmentInfos.getVersion();
@@ -351,7 +348,7 @@ final class StandardDirectoryReader extends DirectoryReader {
   @Override
   protected void doClose() throws IOException {
     Throwable firstExc = null;
-    for (final AtomicReader r : getSequentialSubReaders()) {
+    for (final LeafReader r : getSequentialSubReaders()) {
       // try to close each reader, even if an exception is thrown
       try {
         r.decRef();

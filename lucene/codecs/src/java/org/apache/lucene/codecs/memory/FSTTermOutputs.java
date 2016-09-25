@@ -19,9 +19,10 @@ package org.apache.lucene.codecs.memory;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collections;
 
 import org.apache.lucene.index.FieldInfo;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.util.Accountable;
@@ -79,6 +80,11 @@ class FSTTermOutputs extends Outputs<FSTTermOutputs.TermData> {
       return ramBytesUsed;
     }
 
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      return Collections.emptyList();
+    }
+    
     // NOTE: actually, FST nodes are seldom 
     // identical when outputs on their arcs 
     // aren't NO_OUTPUTs.
@@ -123,7 +129,7 @@ class FSTTermOutputs extends Outputs<FSTTermOutputs.TermData> {
   }
   
   protected FSTTermOutputs(FieldInfo fieldInfo, int longsSize) {
-    this.hasPos = (fieldInfo.getIndexOptions() != IndexOptions.DOCS_ONLY);
+    this.hasPos = fieldInfo.getIndexOptions() != IndexOptions.DOCS;
     this.longsSize = longsSize;
   }
 

@@ -23,12 +23,13 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.TreeMap;
 
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.IndexFileNames;
@@ -43,6 +44,8 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.automaton.ByteRunAutomaton;
 import org.apache.lucene.util.automaton.CompiledAutomaton;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefBuilder;
@@ -72,7 +75,6 @@ public class FSTOrdTermsReader extends FieldsProducer {
   static final int INTERVAL = FSTOrdTermsWriter.SKIP_INTERVAL;
   final TreeMap<String, TermsReader> fields = new TreeMap<>();
   final PostingsReaderBase postingsReader;
-  int version;
   //static final boolean TEST = false;
 
   public FSTOrdTermsReader(SegmentReadState state, PostingsReaderBase postingsReader) throws IOException {
@@ -86,20 +88,29 @@ public class FSTOrdTermsReader extends FieldsProducer {
     try {
       indexIn = state.directory.openChecksumInput(termsIndexFileName, state.context);
       blockIn = state.directory.openInput(termsBlockFileName, state.context);
-      version = readHeader(indexIn);
-      readHeader(blockIn);
-      if (version >= FSTOrdTermsWriter.TERMS_VERSION_CHECKSUM) {
-        CodecUtil.checksumEntireFile(blockIn);
-      }
+      int version = CodecUtil.checkIndexHeader(indexIn, FSTOrdTermsWriter.TERMS_INDEX_CODEC_NAME, 
+                                                          FSTOrdTermsWriter.VERSION_START, 
+                                                          FSTOrdTermsWriter.VERSION_CURRENT, 
+                                                          state.segmentInfo.getId(), state.segmentSuffix);
+      int version2 = CodecUtil.checkIndexHeader(blockIn, FSTOrdTermsWriter.TERMS_CODEC_NAME, 
+                                                           FSTOrdTermsWriter.VERSION_START, 
+                                                           FSTOrdTermsWriter.VERSION_CURRENT, 
+                                                           state.segmentInfo.getId(), state.segmentSuffix);
       
-      this.postingsReader.init(blockIn);
+      if (version != version2) {
+        throw new CorruptIndexException("Format versions mismatch: index=" + version + ", terms=" + version2, blockIn);
+      }
+
+      CodecUtil.checksumEntireFile(blockIn);
+      
+      this.postingsReader.init(blockIn, state);
       seekDir(blockIn);
 
       final FieldInfos fieldInfos = state.fieldInfos;
       final int numFields = blockIn.readVInt();
       for (int i = 0; i < numFields; i++) {
         FieldInfo fieldInfo = fieldInfos.fieldInfo(blockIn.readVInt());
-        boolean hasFreq = fieldInfo.getIndexOptions() != IndexOptions.DOCS_ONLY;
+        boolean hasFreq = fieldInfo.getIndexOptions() != IndexOptions.DOCS;
         long numTerms = blockIn.readVLong();
         long sumTotalTermFreq = hasFreq ? blockIn.readVLong() : -1;
         long sumDocFreq = blockIn.readVLong();
@@ -111,11 +122,7 @@ public class FSTOrdTermsReader extends FieldsProducer {
         TermsReader previous = fields.put(fieldInfo.name, current);
         checkFieldSummary(state.segmentInfo, indexIn, blockIn, current, previous);
       }
-      if (version >= FSTOrdTermsWriter.TERMS_VERSION_CHECKSUM) {
-        CodecUtil.checkFooter(indexIn);
-      } else {
-        CodecUtil.checkEOF(indexIn);
-      }
+      CodecUtil.checkFooter(indexIn);
       success = true;
     } finally {
       if (success) {
@@ -126,34 +133,25 @@ public class FSTOrdTermsReader extends FieldsProducer {
     }
   }
 
-  private int readHeader(IndexInput in) throws IOException {
-    return CodecUtil.checkHeader(in, FSTOrdTermsWriter.TERMS_CODEC_NAME,
-                                     FSTOrdTermsWriter.TERMS_VERSION_START,
-                                     FSTOrdTermsWriter.TERMS_VERSION_CURRENT);
-  }
   private void seekDir(IndexInput in) throws IOException {
-    if (version >= FSTOrdTermsWriter.TERMS_VERSION_CHECKSUM) {
-      in.seek(in.length() - CodecUtil.footerLength() - 8);
-    } else {
-      in.seek(in.length() - 8);
-    }
+    in.seek(in.length() - CodecUtil.footerLength() - 8);
     in.seek(in.readLong());
   }
   private void checkFieldSummary(SegmentInfo info, IndexInput indexIn, IndexInput blockIn, TermsReader field, TermsReader previous) throws IOException {
     // #docs with field must be <= #docs
     if (field.docCount < 0 || field.docCount > info.getDocCount()) {
-      throw new CorruptIndexException("invalid docCount: " + field.docCount + " maxDoc: " + info.getDocCount() + " (resource=" + indexIn + ", " + blockIn + ")");
+      throw new CorruptIndexException("invalid docCount: " + field.docCount + " maxDoc: " + info.getDocCount() + " (blockIn=" + blockIn + ")", indexIn);
     }
     // #postings must be >= #docs with field
     if (field.sumDocFreq < field.docCount) {
-      throw new CorruptIndexException("invalid sumDocFreq: " + field.sumDocFreq + " docCount: " + field.docCount + " (resource=" + indexIn + ", " + blockIn + ")");
+      throw new CorruptIndexException("invalid sumDocFreq: " + field.sumDocFreq + " docCount: " + field.docCount + " (blockIn=" + blockIn + ")", indexIn);
     }
     // #positions must be >= #postings
     if (field.sumTotalTermFreq != -1 && field.sumTotalTermFreq < field.sumDocFreq) {
-      throw new CorruptIndexException("invalid sumTotalTermFreq: " + field.sumTotalTermFreq + " sumDocFreq: " + field.sumDocFreq + " (resource=" + indexIn + ", " + blockIn + ")");
+      throw new CorruptIndexException("invalid sumTotalTermFreq: " + field.sumTotalTermFreq + " sumDocFreq: " + field.sumDocFreq + " (blockIn=" + blockIn + ")", indexIn);
     }
     if (previous != null) {
-      throw new CorruptIndexException("duplicate fields: " + field.fieldInfo.name + " (resource=" + indexIn + ", " + blockIn + ")");
+      throw new CorruptIndexException("duplicate fields: " + field.fieldInfo.name + " (blockIn=" + blockIn + ")", indexIn);
     }
   }
 
@@ -182,7 +180,7 @@ public class FSTOrdTermsReader extends FieldsProducer {
     }
   }
 
-  final class TermsReader extends Terms {
+  final class TermsReader extends Terms implements Accountable {
     final FieldInfo fieldInfo;
     final long numTerms;
     final long sumTotalTermFreq;
@@ -274,6 +272,33 @@ public class FSTOrdTermsReader extends FieldsProducer {
     @Override
     public TermsEnum intersect(CompiledAutomaton compiled, BytesRef startTerm) throws IOException {
       return new IntersectTermsEnum(compiled, startTerm);
+    }
+
+    @Override
+    public long ramBytesUsed() {
+      long ramBytesUsed = 0;
+      if (index != null) {
+        ramBytesUsed += index.ramBytesUsed();
+        ramBytesUsed += RamUsageEstimator.sizeOf(metaBytesBlock);
+        ramBytesUsed += RamUsageEstimator.sizeOf(metaLongsBlock);
+        ramBytesUsed += RamUsageEstimator.sizeOf(skipInfo);
+        ramBytesUsed += RamUsageEstimator.sizeOf(statsBlock);
+      }
+      return ramBytesUsed;
+    }
+
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      if (index == null) {
+        return Collections.emptyList();
+      } else {
+        return Collections.singletonList(Accountables.namedAccountable("terms", index));
+      }
+    }
+    
+    @Override
+    public String toString() {
+      return "FSTOrdTerms(terms=" + numTerms + ",postings=" + sumDocFreq + ",positions=" + sumTotalTermFreq + ",docs=" + docCount + ")";
     }
 
     // Only wraps common operations for PBF interact
@@ -834,17 +859,24 @@ public class FSTOrdTermsReader extends FieldsProducer {
   public long ramBytesUsed() {
     long ramBytesUsed = postingsReader.ramBytesUsed();
     for (TermsReader r : fields.values()) {
-      if (r.index != null) {
-        ramBytesUsed += r.index.ramBytesUsed();
-        ramBytesUsed += RamUsageEstimator.sizeOf(r.metaBytesBlock);
-        ramBytesUsed += RamUsageEstimator.sizeOf(r.metaLongsBlock);
-        ramBytesUsed += RamUsageEstimator.sizeOf(r.skipInfo);
-        ramBytesUsed += RamUsageEstimator.sizeOf(r.statsBlock);
-      }
+      ramBytesUsed += r.ramBytesUsed();
     }
     return ramBytesUsed;
   }
   
+  @Override
+  public Iterable<? extends Accountable> getChildResources() {
+    List<Accountable> resources = new ArrayList<>();
+    resources.addAll(Accountables.namedAccountables("field", fields));
+    resources.add(Accountables.namedAccountable("delegate", postingsReader));
+    return Collections.unmodifiableList(resources);
+  }
+  
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + "(fields=" + fields.size() + ",delegate=" + postingsReader + ")";
+  }
+
   @Override
   public void checkIntegrity() throws IOException {
     postingsReader.checkIntegrity();

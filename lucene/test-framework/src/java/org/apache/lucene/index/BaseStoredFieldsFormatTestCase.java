@@ -32,14 +32,13 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.StoredFieldsFormat;
-import org.apache.lucene.codecs.lucene410.Lucene410Codec;
 import org.apache.lucene.codecs.simpletext.SimpleTextCodec;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.DoubleField;
-import org.apache.lucene.document.Field;
 import org.apache.lucene.document.Field.Store;
-import org.apache.lucene.document.FieldType;
+import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType.NumericType;
+import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.FloatField;
 import org.apache.lucene.document.IntField;
 import org.apache.lucene.document.LongField;
@@ -54,11 +53,10 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.MMapDirectory;
-import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.MockDirectoryWrapper.Throttling;
+import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.TestUtil;
-
 import com.carrotsearch.randomizedtesting.generators.RandomInts;
 import com.carrotsearch.randomizedtesting.generators.RandomPicks;
 
@@ -126,7 +124,7 @@ public abstract class BaseStoredFieldsFormatTestCase extends BaseIndexFileFormat
       w.addDocument(doc);
       if (rand.nextInt(50) == 17) {
         // mixup binding of field name -> Number every so often
-        Collections.shuffle(fieldIDs);
+        Collections.shuffle(fieldIDs, random());
       }
       if (rand.nextInt(5) == 3 && i > 0) {
         final String delID = ""+rand.nextInt(i);
@@ -297,8 +295,8 @@ public abstract class BaseStoredFieldsFormatTestCase extends BaseIndexFileFormat
     
     assertEquals(numDocs, r.numDocs());
 
-    for(AtomicReaderContext ctx : r.leaves()) {
-      final AtomicReader sub = ctx.reader();
+    for(LeafReaderContext ctx : r.leaves()) {
+      final LeafReader sub = ctx.reader();
       final NumericDocValues ids = DocValues.getNumeric(sub, "id");
       for(int docID=0;docID<sub.numDocs();docID++) {
         final StoredDocument doc = sub.document(docID);
@@ -322,8 +320,8 @@ public abstract class BaseStoredFieldsFormatTestCase extends BaseIndexFileFormat
     w.addDocument(doc);
     IndexReader r = w.getReader();
     w.close();
-    assertFalse(r.document(0).getField("field").fieldType().indexed());
-    assertTrue(r.document(0).getField("field2").fieldType().indexed());
+    assertEquals(IndexOptions.NONE, r.document(0).getField("field").fieldType().indexOptions());
+    assertNotNull(r.document(0).getField("field2").fieldType().indexOptions());
     r.close();
     dir.close();
   }
@@ -491,7 +489,7 @@ public abstract class BaseStoredFieldsFormatTestCase extends BaseIndexFileFormat
     // get another codec, other than the default: so we are merging segments across different codecs
     final Codec otherCodec;
     if ("SimpleText".equals(Codec.getDefault().getName())) {
-      otherCodec = new Lucene410Codec();
+      otherCodec = TestUtil.getDefaultCodec();
     } else {
       otherCodec = new SimpleTextCodec();
     }
@@ -517,7 +515,7 @@ public abstract class BaseStoredFieldsFormatTestCase extends BaseIndexFileFormat
     }
 
     final FieldType type = new FieldType(StringField.TYPE_STORED);
-    type.setIndexed(false);
+    type.setIndexOptions(IndexOptions.NONE);
     type.freeze();
     IntField id = new IntField("id", 0, Store.YES);
     for (int i = 0; i < data.length; ++i) {
@@ -607,7 +605,7 @@ public abstract class BaseStoredFieldsFormatTestCase extends BaseIndexFileFormat
     bigDoc2.add(idField);
 
     final FieldType onlyStored = new FieldType(StringField.TYPE_STORED);
-    onlyStored.setIndexed(false);
+    onlyStored.setIndexOptions(IndexOptions.NONE);
 
     final Field smallField = new Field("fld", randomByteArray(random().nextInt(10), 256), onlyStored);
     final int numFields = RandomInts.randomIntBetween(random(), 500000, 1000000);

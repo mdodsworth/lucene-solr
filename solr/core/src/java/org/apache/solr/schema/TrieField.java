@@ -32,6 +32,7 @@ import org.apache.lucene.document.IntField;
 import org.apache.lucene.document.LongField;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.SortedSetDocValuesField;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.StorableField;
 import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.queries.function.valuesource.DoubleFieldSource;
@@ -600,9 +601,8 @@ public class TrieField extends PrimitiveFieldType {
     FieldType ft = new FieldType();
     ft.setStored(stored);
     ft.setTokenized(true);
-    ft.setIndexed(indexed);
     ft.setOmitNorms(field.omitNorms());
-    ft.setIndexOptions(getIndexOptions(field, value.toString()));
+    ft.setIndexOptions(indexed ? getIndexOptions(field, value.toString()) : IndexOptions.NONE);
 
     switch (type) {
       case INTEGER:

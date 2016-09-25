@@ -7,23 +7,10 @@ documents and indexed documents. IndexReader.document(int) now returns
 StoredDocument instead of Document. In most cases a simple replacement
 of the return type is enough to upgrade.
 
-## Removed Reader from Tokenizer constructor (LUCENE-5388)
+## FunctionValues.exist() Behavior Changes due to ValueSource bug fixes (LUCENE-5961)
 
-The constructor of Tokenizer no longer takes Reader, as this was a leftover
-from before it was reusable. See the org.apache.lucene.analysis package
-documentation for more details.
+Bugs fixed in several ValueSource functions may result in different behavior in 
+situations where some documents do not have values for fields wrapped in other 
+ValueSources.  Users who want to preserve the previous behavior may need to wrap 
+their ValueSources in a "DefFunction" along with a ConstValueSource of "0.0".
 
-## Refactored Collector API (LUCENE-5299)
-
-The Collector API has been refactored to use a different Collector instance
-per segment. It is possible to migrate existing collectors painlessly by
-extending SimpleCollector instead of Collector: SimpleCollector is a
-specialization of Collector that returns itself as a per-segment Collector.
-
-## IndexWriter.close now discards all changes and closes, even on exception (LUCENE-4246)
-
-When you close an IndexWriter it will discard all changes; you must
-call .commit() and .waitForMerges() beforehand.  If
-IndexWriterConfig's matchVersion is before 5.0, then close will
-throw an exception indicating that changes were lost (but the
-IndexWriter will still have been closed).

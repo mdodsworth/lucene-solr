@@ -23,7 +23,7 @@ import java.util.BitSet;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
@@ -33,6 +33,7 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.Counter;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.LuceneTestCase.SuppressSysoutChecks;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.ThreadInterruptedException;
 
 /**
@@ -143,7 +144,8 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
       
       myHc = new MyHitCollector();
       long oneHour = 3600000;
-      Collector tlCollector = createTimedCollector(myHc, oneHour, false);
+      long duration = TestUtil.nextLong(random(), oneHour, Long.MAX_VALUE); 
+      Collector tlCollector = createTimedCollector(myHc, duration, false);
       search(tlCollector);
       totalTLCResults = myHc.hitCount();
     } catch (Exception e) {
@@ -351,7 +353,7 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
     }
     
     @Override
-    protected void doSetNextReader(AtomicReaderContext context) throws IOException {
+    protected void doSetNextReader(LeafReaderContext context) throws IOException {
       docBase = context.docBase;
     }
     

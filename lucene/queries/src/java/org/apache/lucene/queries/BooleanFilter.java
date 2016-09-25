@@ -19,18 +19,18 @@ package org.apache.lucene.queries;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Iterator;
+import java.util.List;
 
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.BitsFilteredDocIdSet;
 import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Filter;
+import org.apache.lucene.util.BitDocIdSet;
 import org.apache.lucene.util.Bits;
-import org.apache.lucene.util.FixedBitSet;
 
 /**
  * A container Filter that allows Boolean composition of Filters.
@@ -50,9 +50,9 @@ public class BooleanFilter extends Filter implements Iterable<FilterClause> {
    * of the filters that have been added.
    */
   @Override
-  public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) throws IOException {
-    FixedBitSet res = null;
-    final AtomicReader reader = context.reader();
+  public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) throws IOException {
+    BitDocIdSet.Builder res = null;
+    final LeafReader reader = context.reader();
     
     boolean hasShouldClauses = false;
     for (final FilterClause fc : clauses) {
@@ -61,7 +61,7 @@ public class BooleanFilter extends Filter implements Iterable<FilterClause> {
         final DocIdSetIterator disi = getDISI(fc.getFilter(), context);
         if (disi == null) continue;
         if (res == null) {
-          res = new FixedBitSet(reader.maxDoc());
+          res = new BitDocIdSet.Builder(reader.maxDoc());
         }
         res.or(disi);
       }
@@ -73,8 +73,7 @@ public class BooleanFilter extends Filter implements Iterable<FilterClause> {
       if (fc.getOccur() == Occur.MUST_NOT) {
         if (res == null) {
           assert !hasShouldClauses;
-          res = new FixedBitSet(reader.maxDoc());
-          res.set(0, reader.maxDoc()); // NOTE: may set bits on deleted docs
+          res = new BitDocIdSet.Builder(reader.maxDoc(), true); // NOTE: may set bits on deleted docs
         }
         final DocIdSetIterator disi = getDISI(fc.getFilter(), context);
         if (disi != null) {
@@ -90,7 +89,7 @@ public class BooleanFilter extends Filter implements Iterable<FilterClause> {
           return null; // no documents can match
         }
         if (res == null) {
-          res = new FixedBitSet(reader.maxDoc());
+          res = new BitDocIdSet.Builder(reader.maxDoc());
           res.or(disi);
         } else {
           res.and(disi);
@@ -98,10 +97,13 @@ public class BooleanFilter extends Filter implements Iterable<FilterClause> {
       }
     }
 
-    return BitsFilteredDocIdSet.wrap(res, acceptDocs);
+    if (res == null) {
+      return null;
+    }
+    return BitsFilteredDocIdSet.wrap(res.build(), acceptDocs);
   }
 
-  private static DocIdSetIterator getDISI(Filter filter, AtomicReaderContext context)
+  private static DocIdSetIterator getDISI(Filter filter, LeafReaderContext context)
       throws IOException {
     // we dont pass acceptDocs, we will filter at the end using an additional filter
     final DocIdSet set = filter.getDocIdSet(context, null);

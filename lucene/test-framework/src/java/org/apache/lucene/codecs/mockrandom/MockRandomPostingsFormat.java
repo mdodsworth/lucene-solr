@@ -38,14 +38,12 @@ import org.apache.lucene.codecs.blocktree.BlockTreeTermsReader;
 import org.apache.lucene.codecs.blocktree.BlockTreeTermsWriter;
 import org.apache.lucene.codecs.blocktreeords.OrdsBlockTreeTermsReader;
 import org.apache.lucene.codecs.blocktreeords.OrdsBlockTreeTermsWriter;
-import org.apache.lucene.codecs.lucene41.Lucene41PostingsReader;
-import org.apache.lucene.codecs.lucene41.Lucene41PostingsWriter;
+import org.apache.lucene.codecs.lucene50.Lucene50PostingsReader;
+import org.apache.lucene.codecs.lucene50.Lucene50PostingsWriter;
 import org.apache.lucene.codecs.memory.FSTOrdTermsReader;
 import org.apache.lucene.codecs.memory.FSTOrdTermsWriter;
 import org.apache.lucene.codecs.memory.FSTTermsReader;
 import org.apache.lucene.codecs.memory.FSTTermsWriter;
-import org.apache.lucene.codecs.pulsing.PulsingPostingsReader;
-import org.apache.lucene.codecs.pulsing.PulsingPostingsWriter;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.SegmentReadState;
@@ -94,7 +92,9 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
     }
 
     // we pull this before the seed intentionally: because its not consumed at runtime
-    // (the skipInterval is written into postings header)
+    // (the skipInterval is written into postings header).
+    // NOTE: Currently not passed to postings writer.
+    //       before, it was being passed in wrongly as acceptableOverhead!
     int skipInterval = TestUtil.nextInt(seedRandom, minSkipInterval, 10);
     
     if (LuceneTestCase.VERBOSE) {
@@ -119,15 +119,7 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
     
     random.nextInt(); // consume a random for buffersize
 
-    PostingsWriterBase postingsWriter = new Lucene41PostingsWriter(state, skipInterval);
-
-    if (random.nextBoolean()) {
-      final int totTFCutoff = TestUtil.nextInt(random, 1, 20);
-      if (LuceneTestCase.VERBOSE) {
-        System.out.println("MockRandomCodec: writing pulsing postings with totTFCutoff=" + totTFCutoff);
-      }
-      postingsWriter = new PulsingPostingsWriter(state, totTFCutoff, postingsWriter);
-    }
+    PostingsWriterBase postingsWriter = new Lucene50PostingsWriter(state);
 
     final FieldsConsumer fields;
     final int t1 = random.nextInt(5);
@@ -290,15 +282,7 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
       System.out.println("MockRandomCodec: readBufferSize=" + readBufferSize);
     }
 
-    PostingsReaderBase postingsReader = new Lucene41PostingsReader(state.directory, state.fieldInfos, state.segmentInfo, state.context, state.segmentSuffix);
-
-    if (random.nextBoolean()) {
-      final int totTFCutoff = TestUtil.nextInt(random, 1, 20);
-      if (LuceneTestCase.VERBOSE) {
-        System.out.println("MockRandomCodec: reading pulsing postings with totTFCutoff=" + totTFCutoff);
-      }
-      postingsReader = new PulsingPostingsReader(state, postingsReader);
-    }
+    PostingsReaderBase postingsReader = new Lucene50PostingsReader(state);
 
     final FieldsProducer fields;
     final int t1 = random.nextInt(5);
@@ -330,12 +314,7 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
 
       boolean success = false;
       try {
-        fields = new BlockTreeTermsReader(state.directory,
-                                          state.fieldInfos,
-                                          state.segmentInfo,
-                                          postingsReader,
-                                          state.context,
-                                          state.segmentSuffix);
+        fields = new BlockTreeTermsReader(postingsReader, state);
         success = true;
       } finally {
         if (!success) {
@@ -358,11 +337,7 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
           if (LuceneTestCase.VERBOSE) {
             System.out.println("MockRandomCodec: fixed-gap terms index");
           }
-          indexReader = new FixedGapTermsIndexReader(state.directory,
-                                                     state.fieldInfos,
-                                                     state.segmentInfo.name,
-                                                     BytesRef.getUTF8SortedAsUnicodeComparator(),
-                                                     state.segmentSuffix, state.context);
+          indexReader = new FixedGapTermsIndexReader(state);
         } else {
           final int n2 = random.nextInt(3);
           if (n2 == 1) {
@@ -373,10 +348,7 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
           if (LuceneTestCase.VERBOSE) {
             System.out.println("MockRandomCodec: variable-gap terms index");
           }
-          indexReader = new VariableGapTermsIndexReader(state.directory,
-                                                        state.fieldInfos,
-                                                        state.segmentInfo.name,
-                                                        state.segmentSuffix, state.context);
+          indexReader = new VariableGapTermsIndexReader(state);
 
         }
 
@@ -389,13 +361,7 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
 
       success = false;
       try {
-        fields = new BlockTermsReader(indexReader,
-                                      state.directory,
-                                      state.fieldInfos,
-                                      state.segmentInfo,
-                                      postingsReader,
-                                      state.context,
-                                      state.segmentSuffix);
+        fields = new BlockTermsReader(indexReader, postingsReader, state);
         success = true;
       } finally {
         if (!success) {
@@ -414,12 +380,7 @@ public final class MockRandomPostingsFormat extends PostingsFormat {
 
       boolean success = false;
       try {
-        fields = new OrdsBlockTreeTermsReader(state.directory,
-                                              state.fieldInfos,
-                                              state.segmentInfo,
-                                              postingsReader,
-                                              state.context,
-                                              state.segmentSuffix);
+        fields = new OrdsBlockTreeTermsReader(postingsReader, state);
         success = true;
       } finally {
         if (!success) {

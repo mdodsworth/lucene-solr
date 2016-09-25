@@ -23,24 +23,26 @@ import java.util.Iterator;
 import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.PostingsFormat;
-import org.apache.lucene.codecs.lucene41.Lucene41PostingsFormat;
-import org.apache.lucene.index.AssertingAtomicReader;
+import org.apache.lucene.index.AssertingLeafReader;
 import org.apache.lucene.index.DocsAndPositionsEnum;
 import org.apache.lucene.index.DocsEnum;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.Fields;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.TestUtil;
 
 /**
- * Just like {@link Lucene41PostingsFormat} but with additional asserts.
+ * Just like the default postings format but with additional asserts.
  */
 public final class AssertingPostingsFormat extends PostingsFormat {
-  private final PostingsFormat in = new Lucene41PostingsFormat();
+  private final PostingsFormat in = TestUtil.getDefaultPostingsFormat();
   
   public AssertingPostingsFormat() {
     super("Asserting");
@@ -61,6 +63,10 @@ public final class AssertingPostingsFormat extends PostingsFormat {
     
     AssertingFieldsProducer(FieldsProducer in) {
       this.in = in;
+      // do a few simple checks on init
+      assert toString() != null;
+      assert ramBytesUsed() >= 0;
+      assert getChildResources() != null;
     }
     
     @Override
@@ -78,7 +84,7 @@ public final class AssertingPostingsFormat extends PostingsFormat {
     @Override
     public Terms terms(String field) throws IOException {
       Terms terms = in.terms(field);
-      return terms == null ? null : new AssertingAtomicReader.AssertingTerms(terms);
+      return terms == null ? null : new AssertingLeafReader.AssertingTerms(terms);
     }
 
     @Override
@@ -88,12 +94,31 @@ public final class AssertingPostingsFormat extends PostingsFormat {
 
     @Override
     public long ramBytesUsed() {
-      return in.ramBytesUsed();
+      long v = in.ramBytesUsed();
+      assert v >= 0;
+      return v;
+    }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+      Iterable<? extends Accountable> res = in.getChildResources();
+      TestUtil.checkIterator(res.iterator());
+      return res;
     }
 
     @Override
     public void checkIntegrity() throws IOException {
       in.checkIntegrity();
+    }
+    
+    @Override
+    public FieldsProducer getMergeInstance() throws IOException {
+      return new AssertingFieldsProducer(in.getMergeInstance());
+    }
+
+    @Override
+    public String toString() {
+      return getClass().getSimpleName() + "(" + in.toString() + ")";
     }
   }
 
@@ -136,9 +161,9 @@ public final class AssertingPostingsFormat extends PostingsFormat {
         DocsEnum docsEnum = null;
         DocsAndPositionsEnum posEnum = null;
 
-        boolean hasFreqs = fieldInfo.getIndexOptions().compareTo(FieldInfo.IndexOptions.DOCS_AND_FREQS) >= 0;
-        boolean hasPositions = fieldInfo.getIndexOptions().compareTo(FieldInfo.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0;
-        boolean hasOffsets = fieldInfo.getIndexOptions().compareTo(FieldInfo.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0;
+        boolean hasFreqs = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS) >= 0;
+        boolean hasPositions = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0;
+        boolean hasOffsets = fieldInfo.getIndexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) >= 0;
         boolean hasPayloads = terms.hasPayloads();
 
         assert hasPositions == terms.hasPositions();

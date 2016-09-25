@@ -45,8 +45,9 @@ import java.util.*;
  * Do <b>NOT</b> use this class for indexing in master/slave scenarios since documents must be sent to the
  * correct master; no inter-node routing is done.
  *
- * In SolrCloud (leader/replica) scenarios, this class may be used for updates since updates will be forwarded
- * to the appropriate leader.
+ * In SolrCloud (leader/replica) scenarios, it is usually better to use
+ * {@link org.apache.solr.client.solrj.impl.CloudSolrServer}, but this class may be used
+ * for updates because the server will forward them to the appropriate leader.
  *
  * Also see the <a href="http://wiki.apache.org/solr/LBHttpSolrServer">wiki</a> page.
  *
@@ -106,7 +107,7 @@ public class LBHttpSolrServer extends SolrServer {
   private volatile ResponseParser parser;
   private volatile RequestWriter requestWriter;
 
-  private Set<String> queryParams;
+  private Set<String> queryParams = new HashSet<>();
 
   static {
     solrQuery.setRows(0);
@@ -244,6 +245,9 @@ public class LBHttpSolrServer extends SolrServer {
   public void setQueryParams(Set<String> queryParams) {
     this.queryParams = queryParams;
   }
+  public void addQueryParams(String queryOnlyParam) {
+    this.queryParams.add(queryOnlyParam) ;
+  }
 
   public static String normalize(String server) {
     if (server.endsWith("/"))
@@ -283,7 +287,7 @@ public class LBHttpSolrServer extends SolrServer {
     Rsp rsp = new Rsp();
     Exception ex = null;
     boolean isUpdate = req.request instanceof IsUpdateRequest;
-    List<ServerWrapper> skipped = new ArrayList<>(req.getNumDeadServersToTry());
+    List<ServerWrapper> skipped = null;
 
     for (String serverStr : req.getServers()) {
       serverStr = normalize(serverStr);
@@ -291,8 +295,16 @@ public class LBHttpSolrServer extends SolrServer {
       ServerWrapper wrapper = zombieServers.get(serverStr);
       if (wrapper != null) {
         // System.out.println("ZOMBIE SERVER QUERIED: " + serverStr);
-        if (skipped.size() < req.getNumDeadServersToTry())
-          skipped.add(wrapper);
+        final int numDeadServersToTry = req.getNumDeadServersToTry();
+        if (numDeadServersToTry > 0) {
+          if (skipped == null) {
+            skipped = new ArrayList<>(numDeadServersToTry);
+            skipped.add(wrapper);
+          }
+          else if (skipped.size() < numDeadServersToTry) {
+            skipped.add(wrapper);
+          }
+        }
         continue;
       }
       rsp.server = serverStr;
@@ -305,10 +317,12 @@ public class LBHttpSolrServer extends SolrServer {
     }
 
     // try the servers we previously skipped
-    for (ServerWrapper wrapper : skipped) {
-      ex = doRequest(wrapper.solrServer, req, rsp, isUpdate, true, wrapper.getKey());
-      if (ex == null) {
-         return rsp; // SUCCESS
+    if (skipped != null) {
+      for (ServerWrapper wrapper : skipped) {
+        ex = doRequest(wrapper.solrServer, req, rsp, isUpdate, true, wrapper.getKey());
+        if (ex == null) {
+          return rsp; // SUCCESS
+        }
       }
     }
 
@@ -470,7 +484,7 @@ public class LBHttpSolrServer extends SolrServer {
     Map<String,ServerWrapper> justFailed = null;
 
     for (int attempts=0; attempts<maxTries; attempts++) {
-      int count = counter.incrementAndGet();      
+      int count = counter.incrementAndGet() & Integer.MAX_VALUE;
       ServerWrapper wrapper = serverList[count % serverList.length];
       wrapper.lastUsed = System.currentTimeMillis();
 
@@ -618,6 +632,9 @@ public class LBHttpSolrServer extends SolrServer {
     };
   }
 
+  /**
+   * Return the HttpClient this instance uses.
+   */
   public HttpClient getHttpClient() {
     return httpClient;
   }
@@ -625,11 +642,25 @@ public class LBHttpSolrServer extends SolrServer {
   public ResponseParser getParser() {
     return parser;
   }
-  
+
+  /**
+   * Changes the {@link ResponseParser} that will be used for the internal
+   * SolrServer objects.
+   *
+   * @param parser Default Response Parser chosen to parse the response if the parser
+   *               were not specified as part of the request.
+   * @see org.apache.solr.client.solrj.SolrRequest#getResponseParser()
+   */
   public void setParser(ResponseParser parser) {
     this.parser = parser;
   }
-  
+
+  /**
+   * Changes the {@link RequestWriter} that will be used for the internal
+   * SolrServer objects.
+   *
+   * @param requestWriter Default RequestWriter, used to encode requests sent to the server.
+   */
   public void setRequestWriter(RequestWriter requestWriter) {
     this.requestWriter = requestWriter;
   }

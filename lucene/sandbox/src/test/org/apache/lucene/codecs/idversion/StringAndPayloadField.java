@@ -25,7 +25,7 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.PayloadAttribute;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.util.BytesRef;
 
 // TODO: can we take a BytesRef token instead?
@@ -36,7 +36,6 @@ class StringAndPayloadField extends Field {
   public static final FieldType TYPE = new FieldType();
 
   static {
-    TYPE.setIndexed(true);
     TYPE.setOmitNorms(true);
     TYPE.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS);
     TYPE.setTokenized(true);

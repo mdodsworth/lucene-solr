@@ -17,11 +17,10 @@ package org.apache.solr.schema;
  * limitations under the License.
  */
 
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.FieldInfo.DocValuesType;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.SortedSetDocValues;
-import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.search.SolrIndexSearcher;
@@ -30,7 +29,6 @@ import org.junit.BeforeClass;
 
 import java.io.IOException;
 
-@SuppressCodecs({"Lucene40", "Lucene41"})
 public class DocValuesMultiTest extends SolrTestCaseJ4 {
 
   @BeforeClass
@@ -50,7 +48,7 @@ public class DocValuesMultiTest extends SolrTestCaseJ4 {
       final RefCounted<SolrIndexSearcher> searcherRef = core.openNewSearcher(true, true);
       final SolrIndexSearcher searcher = searcherRef.get();
       try {
-        final AtomicReader reader = searcher.getAtomicReader();
+        final LeafReader reader = searcher.getLeafReader();
         assertEquals(1, reader.numDocs());
         final FieldInfos infos = reader.getFieldInfos();
         assertEquals(DocValuesType.SORTED_SET, infos.fieldInfo("stringdv").getDocValuesType());

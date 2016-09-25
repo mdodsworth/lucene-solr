@@ -34,200 +34,150 @@ public final class FieldInfo {
   /** Internal field number */
   public final int number;
 
-  private boolean indexed;
-  private DocValuesType docValueType;
+  private DocValuesType docValuesType = DocValuesType.NONE;
 
   // True if any document indexed term vectors
   private boolean storeTermVector;
 
-  private DocValuesType normType;
   private boolean omitNorms; // omit norms associated with indexed fields  
-  private IndexOptions indexOptions;
+
+  private IndexOptions indexOptions = IndexOptions.NONE;
   private boolean storePayloads; // whether this field stores payloads together with term positions
 
   private Map<String,String> attributes;
 
   private long dvGen;
-  
   /**
-   * Controls how much information is stored in the postings lists.
-   * @lucene.experimental
-   */
-  public static enum IndexOptions { 
-    // NOTE: order is important here; FieldInfo uses this
-    // order to merge two conflicting IndexOptions (always
-    // "downgrades" by picking the lowest).
-    /** 
-     * Only documents are indexed: term frequencies and positions are omitted.
-     * Phrase and other positional queries on the field will throw an exception, and scoring
-     * will behave as if any term in the document appears only once.
-     */
-    // TODO: maybe rename to just DOCS?
-    DOCS_ONLY,
-    /** 
-     * Only documents and term frequencies are indexed: positions are omitted. 
-     * This enables normal scoring, except Phrase and other positional queries
-     * will throw an exception.
-     */  
-    DOCS_AND_FREQS,
-    /** 
-     * Indexes documents, frequencies and positions.
-     * This is a typical default for full-text search: full scoring is enabled
-     * and positional queries are supported.
-     */
-    DOCS_AND_FREQS_AND_POSITIONS,
-    /** 
-     * Indexes documents, frequencies, positions and offsets.
-     * Character offsets are encoded alongside the positions. 
-     */
-    DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS,
-  }
-  
-  /**
-   * DocValues types.
-   * Note that DocValues is strongly typed, so a field cannot have different types
-   * across different documents.
-   */
-  public static enum DocValuesType {
-    /** 
-     * A per-document Number
-     */
-    NUMERIC,
-    /**
-     * A per-document byte[].  Values may be larger than
-     * 32766 bytes, but different codecs may enforce their own limits.
-     */
-    BINARY,
-    /** 
-     * A pre-sorted byte[]. Fields with this type only store distinct byte values 
-     * and store an additional offset pointer per document to dereference the shared 
-     * byte[]. The stored byte[] is presorted and allows access via document id, 
-     * ordinal and by-value.  Values must be <= 32766 bytes.
-     */
-    SORTED,
-    /** 
-     * A pre-sorted Number[]. Fields with this type store numeric values in sorted
-     * order according to {@link Long#compare(long, long)}.
-     */
-    SORTED_NUMERIC,
-    /** 
-     * A pre-sorted Set&lt;byte[]&gt;. Fields with this type only store distinct byte values 
-     * and store additional offset pointers per document to dereference the shared 
-     * byte[]s. The stored byte[] is presorted and allows access via document id, 
-     * ordinal and by-value.  Values must be <= 32766 bytes.
-     */
-    SORTED_SET
-  }
-
-  /**
-   * Sole Constructor.
+   * Sole constructor.
    *
    * @lucene.experimental
    */
-  public FieldInfo(String name, boolean indexed, int number, boolean storeTermVector, boolean omitNorms, 
-      boolean storePayloads, IndexOptions indexOptions, DocValuesType docValues, DocValuesType normsType, 
+  public FieldInfo(String name, int number, boolean storeTermVector, boolean omitNorms, 
+      boolean storePayloads, IndexOptions indexOptions, DocValuesType docValues,
       long dvGen, Map<String,String> attributes) {
+    if (docValues == null) {
+      throw new NullPointerException("DocValuesType cannot be null (field: \"" + name + "\")");
+    }
+    if (indexOptions == null) {
+      throw new NullPointerException("IndexOptions cannot be null (field: \"" + name + "\")");
+    }
     this.name = name;
-    this.indexed = indexed;
     this.number = number;
-    this.docValueType = docValues;
-    if (indexed) {
+    this.docValuesType = docValues;
+    this.indexOptions = indexOptions;
+    if (indexOptions != IndexOptions.NONE) {
       this.storeTermVector = storeTermVector;
       this.storePayloads = storePayloads;
       this.omitNorms = omitNorms;
-      this.indexOptions = indexOptions;
-      this.normType = !omitNorms ? normsType : null;
     } else { // for non-indexed fields, leave defaults
       this.storeTermVector = false;
       this.storePayloads = false;
       this.omitNorms = false;
-      this.indexOptions = null;
-      this.normType = null;
     }
     this.dvGen = dvGen;
     this.attributes = attributes;
     assert checkConsistency();
   }
 
-  private boolean checkConsistency() {
-    if (!indexed) {
-      assert !storeTermVector;
-      assert !storePayloads;
-      assert !omitNorms;
-      assert normType == null;
-      assert indexOptions == null;
-    } else {
-      assert indexOptions != null;
-      if (omitNorms) {
-        assert normType == null;
-      }
+  /** 
+   * Performs internal consistency checks.
+   * Always returns true (or throws IllegalStateException) 
+   */
+  public boolean checkConsistency() {
+    if (indexOptions != IndexOptions.NONE) {
       // Cannot store payloads unless positions are indexed:
-      assert indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0 || !this.storePayloads;
+      if (indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) < 0 && storePayloads) {
+        throw new IllegalStateException("indexed field '" + name + "' cannot have payloads without positions");
+      }
+    } else {
+      if (storeTermVector) {
+        throw new IllegalStateException("non-indexed field '" + name + "' cannot store term vectors");
+      }
+      if (storePayloads) {
+        throw new IllegalStateException("non-indexed field '" + name + "' cannot store payloads");
+      }
+      if (omitNorms) {
+        throw new IllegalStateException("non-indexed field '" + name + "' cannot omit norms");
+      }
     }
     
-    if (dvGen != -1) {
-      assert docValueType != null;
+    if (dvGen != -1 && docValuesType == DocValuesType.NONE) {
+      throw new IllegalStateException("field '" + name + "' cannot have a docvalues update generation without having docvalues");
     }
 
     return true;
   }
 
-  void update(IndexableFieldType ft) {
-    update(ft.indexed(), false, ft.omitNorms(), false, ft.indexOptions());
-  }
-
   // should only be called by FieldInfos#addOrUpdate
-  void update(boolean indexed, boolean storeTermVector, boolean omitNorms, boolean storePayloads, IndexOptions indexOptions) {
+  void update(boolean storeTermVector, boolean omitNorms, boolean storePayloads, IndexOptions indexOptions) {
+    if (indexOptions == null) {
+      throw new NullPointerException("IndexOptions cannot be null (field: \"" + name + "\")");
+    }
     //System.out.println("FI.update field=" + name + " indexed=" + indexed + " omitNorms=" + omitNorms + " this.omitNorms=" + this.omitNorms);
-    this.indexed |= indexed;  // once indexed, always indexed
-    if (indexed) { // if updated field data is not for indexing, leave the updates out
+    if (this.indexOptions != indexOptions) {
+      if (this.indexOptions == IndexOptions.NONE) {
+        this.indexOptions = indexOptions;
+      } else if (indexOptions != IndexOptions.NONE) {
+        // downgrade
+        this.indexOptions = this.indexOptions.compareTo(indexOptions) < 0 ? this.indexOptions : indexOptions;
+      }
+    }
+
+    if (this.indexOptions != IndexOptions.NONE) { // if updated field data is not for indexing, leave the updates out
       this.storeTermVector |= storeTermVector;                // once vector, always vector
       this.storePayloads |= storePayloads;
-      if (this.omitNorms != omitNorms) {
+
+      // Awkward: only drop norms if incoming update is indexed:
+      if (indexOptions != IndexOptions.NONE && this.omitNorms != omitNorms) {
         this.omitNorms = true;                // if one require omitNorms at least once, it remains off for life
-        this.normType = null;
       }
-      if (this.indexOptions != indexOptions) {
-        if (this.indexOptions == null) {
-          this.indexOptions = indexOptions;
-        } else {
-          // downgrade
-          this.indexOptions = this.indexOptions.compareTo(indexOptions) < 0 ? this.indexOptions : indexOptions;
-        }
-        if (this.indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) < 0) {
-          // cannot store payloads if we don't store positions:
-          this.storePayloads = false;
-        }
-      }
+    }
+    if (this.indexOptions == IndexOptions.NONE || this.indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) < 0) {
+      // cannot store payloads if we don't store positions:
+      this.storePayloads = false;
     }
     assert checkConsistency();
   }
 
   void setDocValuesType(DocValuesType type) {
-    if (docValueType != null && docValueType != type) {
-      throw new IllegalArgumentException("cannot change DocValues type from " + docValueType + " to " + type + " for field \"" + name + "\"");
+    if (type == null) {
+      throw new NullPointerException("DocValuesType cannot be null (field: \"" + name + "\")");
     }
-    docValueType = type;
+    if (docValuesType != DocValuesType.NONE && type != DocValuesType.NONE && docValuesType != type) {
+      throw new IllegalArgumentException("cannot change DocValues type from " + docValuesType + " to " + type + " for field \"" + name + "\"");
+    }
+    docValuesType = type;
     assert checkConsistency();
   }
   
-  /** Returns IndexOptions for the field, or null if the field is not indexed */
+  /** Returns IndexOptions for the field, or IndexOptions.NONE if the field is not indexed */
   public IndexOptions getIndexOptions() {
     return indexOptions;
   }
+
+  /** Record the {@link IndexOptions} to use with this field. */
+  public void setIndexOptions(IndexOptions newIndexOptions) {
+    if (indexOptions != newIndexOptions) {
+      if (indexOptions == IndexOptions.NONE) {
+        indexOptions = newIndexOptions;
+      } else if (newIndexOptions != IndexOptions.NONE) {
+        // downgrade
+        indexOptions = indexOptions.compareTo(newIndexOptions) < 0 ? indexOptions : newIndexOptions;
+      }
+    }
+
+    if (indexOptions == IndexOptions.NONE || indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) < 0) {
+      // cannot store payloads if we don't store positions:
+      storePayloads = false;
+    }
+  }
   
   /**
-   * Returns true if this field has any docValues.
-   */
-  public boolean hasDocValues() {
-    return docValueType != null;
-  }
-
-  /**
-   * Returns {@link DocValuesType} of the docValues. this may be null if the field has no docvalues.
+   * Returns {@link DocValuesType} of the docValues; this is
+   * {@code DocValuesType.NONE} if the field has no docvalues.
    */
   public DocValuesType getDocValuesType() {
-    return docValueType;
+    return docValuesType;
   }
   
   /** Sets the docValues generation of this field. */
@@ -244,52 +194,38 @@ public final class FieldInfo {
     return dvGen;
   }
   
-  /**
-   * Returns {@link DocValuesType} of the norm. this may be null if the field has no norms.
-   */
-  public DocValuesType getNormType() {
-    return normType;
-  }
-
   void setStoreTermVectors() {
     storeTermVector = true;
     assert checkConsistency();
   }
   
   void setStorePayloads() {
-    if (indexed && indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
+    if (indexOptions != IndexOptions.NONE && indexOptions.compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
       storePayloads = true;
     }
     assert checkConsistency();
   }
 
-  void setNormValueType(DocValuesType type) {
-    if (normType != null && normType != type) {
-      throw new IllegalArgumentException("cannot change Norm type from " + normType + " to " + type + " for field \"" + name + "\"");
-    }
-    normType = type;
-    assert checkConsistency();
-  }
-  
   /**
    * Returns true if norms are explicitly omitted for this field
    */
   public boolean omitsNorms() {
     return omitNorms;
   }
+
+  /** Omit norms for this field. */
+  public void setOmitsNorms() {
+    if (indexOptions == IndexOptions.NONE) {
+      throw new IllegalStateException("cannot omit norms: this field is not indexed");
+    }
+    omitNorms = true;
+  }
   
   /**
    * Returns true if this field actually has any norms.
    */
   public boolean hasNorms() {
-    return normType != null;
-  }
-  
-  /**
-   * Returns true if this field is indexed.
-   */
-  public boolean isIndexed() {
-    return indexed;
+    return indexOptions != IndexOptions.NONE && omitNorms == false;
   }
   
   /**

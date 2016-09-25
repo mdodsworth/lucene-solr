@@ -30,7 +30,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.document.StoredField;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.NumericDocValues;
@@ -39,6 +39,7 @@ import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BitDocIdSet;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
@@ -133,10 +134,7 @@ public class TestSortRandom extends LuceneTestCase {
       final boolean sortMissingLast;
       final boolean missingIsNull;
       sf = new SortField("stringdv", type, reverse);
-      // Can only use sort missing if the DVFormat
-      // supports docsWithField:
-      sortMissingLast = defaultCodecSupportsDocsWithField() && random().nextBoolean();
-      missingIsNull = defaultCodecSupportsDocsWithField();
+      sortMissingLast = random().nextBoolean();
 
       if (sortMissingLast) {
         sf.setMissingValue(SortField.STRING_LAST);
@@ -206,9 +204,6 @@ public class TestSortRandom extends LuceneTestCase {
         System.out.println("  expected:");
         for(int idx=0;idx<expected.size();idx++) {
           BytesRef br = expected.get(idx);
-          if (br == null && missingIsNull == false) {
-            br = new BytesRef();
-          }
           System.out.println("    " + idx + ": " + (br == null ? "<missing>" : br.utf8ToString()));
           if (idx == hitCount-1) {
             break;
@@ -228,20 +223,8 @@ public class TestSortRandom extends LuceneTestCase {
       for(int hitIDX=0;hitIDX<hits.scoreDocs.length;hitIDX++) {
         final FieldDoc fd = (FieldDoc) hits.scoreDocs[hitIDX];
         BytesRef br = expected.get(hitIDX);
-        if (br == null && missingIsNull == false) {
-          br = new BytesRef();
-        }
 
-        // Normally, the old codecs (that don't support
-        // docsWithField via doc values) will always return
-        // an empty BytesRef for the missing case; however,
-        // if all docs in a given segment were missing, in
-        // that case it will return null!  So we must map
-        // null here, too:
         BytesRef br2 = (BytesRef) fd.fields[0];
-        if (br2 == null && missingIsNull == false) {
-          br2 = new BytesRef();
-        }
         
         assertEquals(br, br2);
       }
@@ -265,7 +248,7 @@ public class TestSortRandom extends LuceneTestCase {
     }
 
     @Override
-    public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) throws IOException {
+    public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) throws IOException {
       final int maxDoc = context.reader().maxDoc();
       final NumericDocValues idSource = DocValues.getNumeric(context.reader(), "id");
       assertNotNull(idSource);
@@ -278,7 +261,7 @@ public class TestSortRandom extends LuceneTestCase {
         }
       }
 
-      return bits;
+      return new BitDocIdSet(bits);
     }
   }
 }
